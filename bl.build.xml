@@ -1,0 +1,2774 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="bl-build">
+
+    <description>A base build file for business logic for QRA modules.</description>
+
+    <!--
+        Version: 1.0.0.112
+
+        This build file contains common targets used to build the QRA module
+        business logic projects. This file is imported into a project specific
+        build file that sets some project specific properties.
+    -->
+
+    <property name="qra.lib.file" location="qra.dependencies"/>
+    
+    <!-- Indicating if the package is following QAD's version standard major.minor.patch.build -->
+    <property name="version.standard" value="true"/>
+
+    <!-- Load local environment properties -->
+    <property file="build.properties"/>
+    <property name="jira" value="https://projects.qad.com:443"/>
+    <property name="loglevel" value="debug"/>
+    <property name="copyverbose" value="true"/>
+    <property name="translation.request.dir" value="work/translation_request"/>
+    <property name="locale" value=""/>
+    <property name="translation.load.dir" value="work/translation_load"/>
+
+    <!-- A file containing a list of patterns that are to be excluded from the bl package -->
+    <property name="excludes.file" value="excludes.list"/>
+
+    <!--
+         Build initialization tasks.
+    -->
+    <target name="init" depends="update-qralib,update-maven-lib,set-sonar-properties">
+
+        <record name="build.log"/>
+        <property environment="env"/>
+
+        <taskdef resource="net/sf/antcontrib/antlib.xml" classpathref="ant.lib.classpath"/>
+
+        <!-- If a dlc version hasn't been specified, use the environment DLC -->
+        <property name="require.dlc.version" value="DLC"/>
+        <fail message="A ${require.dlc.version} environment variable must be configured to point to an OE installation."
+            unless="env.${require.dlc.version}"/>
+        <propertycopy property="envDLC" from="env.${require.dlc.version}"/>
+        <property name="DLC" value="${envDLC}"/>
+
+        <taskdef resource="com/qad/qra/gen/antlib.xml" classpathref="ant.lib.classpath">
+            <classpath location="${DLC}/java/o4glrt.jar"/>
+        </taskdef>
+        <taskdef resource="PCT.properties" classpathref="ant.lib.classpath"/>
+        <taskdef resource="com/qad/packaging/ant/antlib.xml" classpathref="ant.lib.classpath"/>
+        <taskdef resource="com/qad/build/qra/antlib.xml" classpathref="ant.lib.classpath"/>
+        <taskdef resource="Justus.properties" classpathref="ant.lib.classpath" />
+        <taskdef resource="net/sf/antcontrib/antlib.xml" classpathref="ant.lib.classpath"/>
+        <taskdef resource="com/qad/packaging/release/ant/antlib.xml" classpathref="ant.lib.classpath"/>
+        <taskdef resource="com/qad/build/antlib.xml" classpathref="ant.lib.classpath"/>
+        <taskdef name="xmltask" classname="com.oopsconsultancy.xmltask.ant.XmlTask" classpathref="ant.lib.classpath"/>
+
+        <tstamp>
+            <format property="build.timestamp" pattern="yyyy.MM.dd HH:mm:ss z"/>
+        </tstamp>
+
+        <!--<log configuration="logging.xml" set="debug"/>-->
+
+        <path id="qra.test.propath">
+            <pathelement path="src/api"/>
+            <pathelement path="src/impl"/>
+            <pathelement path="work/ebeclass"/>
+            <pathelement path="work/pluginconnector/api"/>
+            <pathelement path="work/pluginconnector/impl"/>
+            <pathelement path="src/test"/>
+            <pathelement path="${api.path.depends}"/>
+            <pathelement path="${impl.path.depends}"/>
+            <pathelement path="${test.path.depends}"/>
+            <pathelement path="${DLC}/tty/netlib/OpenEdge.Net.pl"/>
+            <pathelement path="lib/oeunit-qad/src"/>
+        </path>
+
+        <!-- Initialize steps to be skipped.
+             The following maps 'skip.*' properties (which may be defined in build.properties
+             to pre-existing '*.uptodate' properties -->
+        <condition property="apidocs.uptodate" value="true">
+            <isset property="skip.apidocs"/>
+        </condition>
+        
+        <condition property="api.uptodate" value="true">
+            <isset property="skip.api"/>
+        </condition>
+
+        <condition property="base.cls.uptodate" value="true">
+            <isset property="skip.base.cls"/>
+        </condition>
+        <condition property="ebe.cls.uptodate" value="true">
+            <isset property="skip.ebe.cls"/>
+        </condition>
+
+        <condition property="library.uptodate" value="true">
+            <isset property="skip.library"/>
+        </condition>
+
+        <condition property="module.uptodate" value="true">
+            <isset property="skip.bl.packaging"/>
+        </condition>
+
+        <condition property="translations.uptodate" value="true">
+            <isset property="skip.translations"/>
+        </condition>
+
+        <condition property="metadata.uptodate" value="true">
+            <isset property="skip.metadata"/>
+        </condition>
+
+        <condition property="entitymapping.uptodate" value="true">
+            <isset property="skip.entitymapping"/>
+        </condition>
+
+        <condition property="data.manifest.uptodate" value="true">
+            <isset property="skip.data.manifest"/>
+        </condition>
+
+        <condition property="webservices.uptodate" value="true">
+            <isset property="skip.webservice.stubs"/>
+        </condition>
+
+        <available file="${excludes.file}" property="excludes.file.exists"/>
+    </target>
+
+    <target name="release" depends="init,tagrelease,build,publish"
+        description="Create an official module release and publish it to the package repository."/>
+
+    <target name="tagrelease" depends="init,set-release-properties,set-instance-properties"
+        description="Tag the latest code as a new version and configure to execute a module release."/>
+
+    <target name="setversion" depends="init,get-version-properties,set-instance-properties"
+        description="Configure to build a specific module version. Use -Dset.version=1.2.3.4"/>
+
+    <target name="setlatest" depends="init,get-latest-properties,set-instance-properties"
+        description="Configure to build a module from the latest committed code."/>
+
+    <target name="setlocal" depends="init,get-local-properties,set-instance-properties"
+        description="Configure to build a module from the local working copy code."/>
+
+    <target name="set-release-properties" depends="init">
+        <fail if="build.instance.version" message="Version can't be overridden for a release."/>
+        <property name="build.instance.type.release" value="true"/>
+        <tag jira="${jira}" ticket="${ticket}" qpm="${repository}" target="." property="build.instance.version"
+            module="${module.name}" versionSequence="${version.sequence}" urlProperty="instance.url"/>
+    </target>
+
+    <target name="set-instance-properties" depends="init">
+
+        <fail message="Exactly one type of build must be specified: local, latest, version or release.">
+            <condition>
+                <resourcecount when="ne" count="1">
+                    <propertyset>
+                        <propertyref prefix="build.instance.type."/>
+                    </propertyset>
+                </resourcecount>
+            </condition>
+        </fail>
+
+        <echoproperties destfile="instance.properties">
+            <propertyset>
+                <propertyref prefix="build.instance."/>
+            </propertyset>
+        </echoproperties>
+
+        <concat>
+            <fileset file="instance.properties"/>
+        </concat>
+
+    </target>
+
+    <target name="build" depends="init,load-properties,buildbl"
+        description="Build the module."/>
+
+    <target name="load-properties" depends="init,load-properties-local,get-svn-info"/>
+
+    <target name="load-properties-local" depends="init">
+
+        <property file="instance.properties"/>
+
+        <!--
+            If the version has not been set from the instance.properties then
+            default it to 0.0.0.0 to reflect a developer build.
+        -->
+        <property name="build.instance.version" value="0.0.0.0"/>
+
+        <condition property="build.instance.directory" value=".">
+            <isset property="build.instance.type.local"/>
+        </condition>
+
+        <!-- If we're not doing a local build, then use a temporary directory -->
+        <tempfile property="build.instance.directory" prefix="wc" destdir="tmp"/>
+
+    </target>
+
+    <!-- =================================================================== -->
+    <target name="deploy" depends="init,check-installation-service,set-developer,dist,deploy-prep,deploy-with-deps,deploy-no-deps,remove-rt-dependencies"
+        description="Deploy the module to a remote run-time instance."/>
+
+
+    <target name="deploy-api" depends="init,check-installation-service,set-developer,dist,deploy-api-prep,deploy-with-deps,deploy-no-deps,remove-rt-dependencies"
+        description="Deploy the module-api to a remote run-time instance."/>
+
+    <target name="deploy-proxy" depends="init,check-installation-service,set-developer,dist,deploy-proxy-prep,deploy-with-deps,deploy-no-deps,remove-rt-dependencies"
+        description="Updates pre-configured module proxy on remote run-time instance."/>
+
+    <target name="check-installation-service" depends="init" description="Check installation service is defined and running">
+        <!-- Verify InstallationService is defined -->
+        <fail unless="service" message="Installation service url has not been specified."/>
+
+        <!-- Extract host & port from installation-service url -->
+        <property name="regex" value="[a-z][a-z0-9+\-.]*://([a-z0-9\-._]+):([0-9]+)"/>
+        <propertyregex property="ishost"
+            input="${service}"
+            regexp="${regex}"
+            select="\1"
+            casesensitive="false" />
+        <propertyregex property="isport"
+            input="${service}"
+            regexp="${regex}"
+            select="\2"
+            casesensitive="false" />
+        
+        <!-- Verify a TCP/IP listener is available -->
+        <fail message="Installation Service [${service}] not running - please review installation service status and configuration.">
+            <condition>
+                <not>
+                    <socket server="${ishost}" port="${isport}"/> 
+                </not>
+            </condition> 
+        </fail>
+    </target>    
+
+    <target name="remove-rt-dependencies" unless="runtime.dependencies.exists">
+        <!-- in the case where there was no runtime.dependencies an empty one
+             was created - and should be removed. -->
+        <delete file="runtime.dependencies"/>
+    </target>
+
+    <target name="set-developer" unless="build.instance.version">
+        <get-version repository="${repository}" versionSequence="${version.sequence}" property="build.instance.version"/>
+        <property name="yab.developer" value="true"/>
+    </target>
+
+    <target name="deploy-proxy-prep" depends="check-runtime-dependencies,create-runtime-dependencies">
+        <record name="deploy.log"/>
+        <available file="installation.dependencies" property="installation.dependencies.exists"/>
+        <fileset id="deployment.package" dir=".">
+            <include name="dist/${module}-proxy-${build.instance.version}.zip"/>
+        </fileset>
+        <condition property="isforce" value="true" else="false">
+            <equals arg1="${force}" arg2="true"/>
+        </condition>
+    </target>
+
+    <target name="deploy-api-prep" depends="check-runtime-dependencies,create-runtime-dependencies">
+        <record name="deploy.log"/>
+        <available file="installation.dependencies" property="installation.dependencies.exists"/>
+        <fileset id="deployment.package" dir=".">
+            <include name="dist/${module}-api-${build.instance.version}.zip"/>
+        </fileset>
+        <condition property="isforce" value="true" else="false">
+            <equals arg1="${force}" arg2="true"/>
+        </condition>
+    </target>
+
+    <target name="deploy-prep" depends="check-runtime-dependencies,create-runtime-dependencies">
+        <record name="deploy.log"/>
+        <available file="installation.dependencies" property="installation.dependencies.exists"/>
+        <fileset id="deployment.package" dir=".">
+            <include name="dist/${module}-${build.instance.version}.zip"/>
+        </fileset>
+        <condition property="isforce" value="true" else="false">
+            <equals arg1="${force}" arg2="true"/>
+        </condition>
+        <!-- Default command to 'update' if it's not already set -->
+        <property name="command" value="update"/>
+    </target>
+
+    <target name="check-runtime-dependencies">
+        <available file="runtime.dependencies" property="runtime.dependencies.exists"/>
+    </target>
+
+    <target name="create-runtime-dependencies" unless="runtime.dependencies.exists">
+        <touch file="runtime.dependencies"/>
+    </target>
+
+
+
+    <target name="deploy-with-deps" if="installation.dependencies.exists">
+        <echo>Installing with installation.dependencies</echo>
+        <remote-install service="${service}" repository="${repository}"
+            environment="default" logLevel="${loglevel}"
+            dependencyEvaluation="LeastChange"
+            requireInstallationFile="installation.dependencies"
+            requireFile="runtime.dependencies">
+            <fileset refid="deployment.package"/>
+            <arg>-force:${isforce}</arg>
+            <arg>-commands:${command}</arg>
+        </remote-install>
+    </target>
+
+    <target name="deploy-no-deps" unless="installation.dependencies.exists">
+        <echo>Installing with no installation.dependencies specified</echo>
+        <remote-install service="${service}" repository="${repository}"
+            environment="default" logLevel="${loglevel}"
+            dependencyEvaluation="LeastChange"
+            requireFile="runtime.dependencies">
+            <fileset refid="deployment.package"/>
+            <arg>-force:${isforce}</arg>
+            <arg>-commands:${command}</arg>
+        </remote-install>
+    </target>
+
+    <target name="export-metadata" depends="init" description="Exports metadata for a QRA module.">
+        <!-- Export storedview metadata to data directory by default. -->
+        <property name="export.dir" value="data"/>
+        <property name="datatype" value="storedview"/>
+        <property name="module.urn" value="${module.uri}"/>
+        <echo>Exporting ${datatype} metadata to ${export.dir} directory.</echo>
+        <pathconvert pathsep="," property="ant.lib.classpath" refid="ant.lib.classpath"/>
+        <dataRead appserver="${appserver.url}" moduleUri="${module.urn}"
+            classpath="${ant.lib.classpath}"
+            user="${user}" password="${password}"
+            dataType="${datatype}"
+            dir="${export.dir}">
+        </dataRead>
+    </target>
+
+    <target name="clean" description="Remove all build artifacts." >
+        <delete dir="work"/>
+        <delete dir="dist"/>
+        <delete dir="tmp"/>
+        <delete file="velocity.log"/>
+    </target>
+
+    <target name="check-apidocs" depends="init" unless="apidocs.uptodate">
+
+        <uptodate property="apidocs.uptodate"
+            targetfile="work/doc/last-generated.txt">
+            <srcfiles dir="src/api">
+                <include name="**/*.cls"/>
+                <include name="**/*.i"/>
+            </srcfiles>
+        </uptodate>
+
+    </target>
+
+    <target name="apidocs"
+        depends="init,check-apidocs,compile-api,compile-baseclass"
+        unless="apidocs.uptodate"
+        description="Generate API documentation.">
+
+        <mkdir dir="work/doc"/>
+
+        <generate-documentation destdir="work/doc">
+            <propath>
+                <pathelement location="${basedir}/src/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <packageset dir="src/api">
+                <include name="**"/>
+            </packageset>
+        </generate-documentation>
+
+        <echo file="work/doc/last-generated.txt" message="${build.timestamp}"
+            level="info"/>
+    </target>
+
+    <target name="check-metadata" depends="init" unless="metadata.uptodate">
+
+        <uptodate property="metadata.uptodate"
+            targetfile="work/data/entity/last-generated.txt">
+            <srcfiles dir="src/api">
+                <include name="**/*.cls"/>
+                <include name="**/*.i"/>
+            </srcfiles>
+            <srcfiles dir="work/pluginconnector/api" erroronmissingdir="false">
+                <include name="**/*.cls"/>
+                <include name="**/*.i"/>
+            </srcfiles>
+        </uptodate>
+
+    </target>
+
+    <target name="generate-entitymetadata"
+        depends="init,check-metadata,compile-api,generate-entitymetadata-api,generate-entitymetadata-pluginconnector"
+        unless="metadata.uptodate">
+
+        <echo file="work/data/entity/last-generated.txt" message="${build.timestamp}"
+            level="info"/>
+    </target>
+
+    <target name="generate-entitymetadata-api">
+
+        <mkdir dir="work/data/entity"/>
+        <fileset id="rcode.after.entitymetadata.lastgenerated" dir="work/.compile-api">
+            <include name="**/*.r"/>
+            <and>
+               <depend targetdir="work/data/entity/.gen">
+                  <mapper type="package" from="*.r" to="*.last-generated"/>
+               </depend>
+               <present present="both" targetdir="src/api">
+                  <mapper type="glob" from="*.r" to="*.cls"/>
+               </present>
+            </and>
+        </fileset>
+
+        <generate-entitymetadata destdir="work/data/entity" srcdir="${basedir}/src/api">
+            <propath>
+                <pathelement location="${basedir}/src/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <mappedresources>
+               <fileset refid="rcode.after.entitymetadata.lastgenerated"/>
+               <globmapper from="*.r" to="${basedir}/src/api/*.cls"/> 
+            </mappedresources>
+        </generate-entitymetadata>
+
+    </target>
+
+    <target name="generate-entitymetadata-pluginconnector" depends="init">
+
+        <mkdir dir="work/data/entity"/>
+        <fileset id="rcode.after.entitymetadata.lastgenerated" dir="work/.compile-api">
+            <include name="**/*.r"/>
+            <and>
+               <depend targetdir="work/data/entity/.gen">
+                  <mapper type="package" from="*.r" to="*.last-generated"/>
+               </depend>
+               <present present="both" targetdir="work/pluginconnector/api">
+                  <mapper type="glob" from="*.r" to="*.cls"/>
+               </present>
+            </and>
+        </fileset>
+
+        <generate-entitymetadata destdir="work/data/entity" srcdir="${basedir}/work/pluginconnector/api">
+            <propath>
+                <pathelement location="${basedir}/src/api"/>
+                <pathelement location="${basedir}/work/pluginconnector/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <mappedresources>
+               <fileset refid="rcode.after.entitymetadata.lastgenerated"/>
+               <globmapper from="*.r" to="${basedir}/work/pluginconnector/api/*.cls"/> 
+            </mappedresources>
+        </generate-entitymetadata>
+
+    </target>
+
+    <target name="check-entitymapping" depends="init" unless="entitymapping.uptodate">
+        <uptodate property="entitymapping.uptodate" targetfile="work/data/entitymapping/last-generated.txt">
+            <srcfiles dir="src/api">
+                <include name="**/*.cls"/>
+                <include name="**/*.i"/>
+            </srcfiles>
+        </uptodate>
+    </target>
+
+    <target name="generate-entitymapping" depends="init,check-entitymapping,compile-api,create-module-db,create-unittest-dbs" unless="entitymapping.uptodate">
+        <mkdir dir="work/data/entitymapping"/>
+
+        <fileset id="rcode.after.entitymapping.lastgenerated" dir="work/.compile-api">
+            <include name="**/*.r"/>
+            <and>
+               <depend targetdir="work/data/entitymapping/.gen">
+                  <mapper type="package" from="*.r" to="*.last-generated"/>
+               </depend>
+               <present present="both" targetdir="src/api">
+                  <mapper type="glob" from="*.r" to="*.cls"/>
+               </present>
+            </and>
+        </fileset>
+        <generate-entitymapping destdir="work/data/entitymapping"
+                                srcdir="${basedir}/src/api"
+                                dlc="${DLC}"
+                                db="${basedir}/work/db/module"
+                                paramFile="${basedir}/work/db/entitymapping.pf"
+                                lib="${basedir}/lib/qracore.pl"
+                                debug="false">
+            <propath>
+                <pathelement location="${basedir}/src/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <mappedresources>
+               <fileset refid="rcode.after.entitymapping.lastgenerated"/>
+               <globmapper from="*.r" to="${basedir}/src/api/*.cls"/> 
+            </mappedresources>
+        </generate-entitymapping>
+
+        <echo file="work/data/entitymapping/last-generated.txt" message="${build.timestamp}" level="info"/>
+    </target>
+
+    <target name="generate-translations"
+        depends="generate-entitymetadata"
+        unless="translations.uptodate">
+
+        <mkdir dir="work/data/strings"/>
+        <PCTRun dlcHome="${DLC}"
+            procedure="com/qad/tools/ExtractStringUsage.p"
+            cpInternal="UTF-8"
+            stackSize="500">
+            <propath>
+                <pathelement path="."/>
+                <pathelement path="src/api"/>
+                <pathelement path="src/impl"/>
+                <pathelement path="${api.path.depends}"/>
+                <pathelement path="${impl.path.depends}"/>
+                <pathelement path="${DLC}/tty/netlib/OpenEdge.Net.pl"/>
+                <pathelement path="lib/oeunit-qad/src"/>
+            </propath>
+        </PCTRun>
+
+        <echo message="Created work/data/strings/strings.en-US.xml: ${build.timestamp}" level="info"/>
+
+    </target>
+
+    <!-- Generates web service stub programs for interfaces and an xpxg project
+         file for use by proxygen to create WSM (SOAP web service mapping) files.
+    -->
+    <target name="generate-webservices"
+        depends="init,compile-api,check-webservices"
+        unless="webservices.uptodate">
+
+        <mkdir dir="work/gen"/>
+
+        <fileset id="rcode.after.webservices.lastgenerated" dir="work/.compile-api">
+            <include name="**/*.r"/>
+            <and>
+               <depend targetdir="work/gen/.gen">
+                  <mapper type="package" from="*.r" to="*.last-generated"/>
+               </depend>
+               <present present="both" targetdir="src/api">
+                  <mapper type="glob" from="*.r" to="*.cls"/>
+               </present>
+            </and>
+        </fileset>
+        <generate-webservice-stubs destdir="work/gen" srcdir="${basedir}/src/api">
+            <propath>
+                <pathelement location="${basedir}/src/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <mappedresources>
+               <fileset refid="rcode.after.webservices.lastgenerated"/>
+               <globmapper from="*.r" to="${basedir}/src/api/*.cls"/> 
+            </mappedresources>
+        </generate-webservice-stubs>
+
+        <echo file="work/gen/last-generated.txt" message="${build.timestamp}"
+            level="info"/>
+
+    </target>
+
+    <!-- Generates proxies for facades included in a transaction -->
+    <target name="generate-facade-transaction-proxy"
+        depends="generate-webservices,check-skip-progress-proxies"
+        unless="facade.transaction.proxy.uptodate">
+
+        <delete dir="work/facades"/>
+        <mkdir dir="work/facades/config"/>
+        <mkdir dir="work/facades/src"/>
+        <copy file="config/module-config.xml" todir="work/facades/config" />
+
+        <generate-facade-transaction-proxy configFile="work/facades/config/module-config.xml" destdir="work/facades/src" moduleUri="${module.uri}">
+           <propath>
+               <pathelement location="${basedir}/src/api"/>
+               <pathelement path="${api.path.depends}"/>
+           </propath>
+        </generate-facade-transaction-proxy>
+    </target>
+    
+    <!-- Generates proxies for distributed calls -->
+    <target name="generate-distributed-proxy"
+        depends="generate-facade-transaction-proxy"
+        unless="distributed.proxy.uptodate">
+
+        <delete dir="work/distributed"/>
+        <mkdir dir="work/distributed/config"/>
+        <mkdir dir="work/distributed/src"/>
+        <copy file="work/facades/config/module-config.xml" todir="work/distributed/config" />
+
+        <generate-distributed-proxy configFile="work/distributed/config/module-config.xml" destdir="work/distributed/src" moduleUri="${module.uri}">
+           <propath>
+               <pathelement location="${basedir}/src/api"/>
+               <pathelement path="${api.path.depends}"/>
+           </propath>
+        </generate-distributed-proxy>
+    </target>
+
+    <target name="create-work-databases" depends="init,check-create-work-database,build-work-databases"/>
+
+    <target name="build-work-databases" depends="init,check-create-work-database,create-module-db,create-addon-dbs,create-unittest-dbs"/>
+
+    <target name="create-module-db" depends="init,check-create-work-database" unless="work.database.exists">
+        <!-- Create module db using only module.df and qaddb schema -->
+        <fileset id="schema.ref" dir=".">
+            <include name="schema/module.df"/>
+            <include name="schema/progress/qaddb/*.df"/>
+            <include name="work/schema/imported/*.df"/>
+        </fileset>
+
+        <mkdir dir="work/db"/>
+        <PCTCreateBase dlcHome="${DLC}" DBName="module" DestDir="work/db"/>
+        <load-schema db.dir="work/db" db.name="module" schema.fileset="schema.ref"/>
+
+        <!-- Write connection info -->
+        <echo file="work/db/compile.pf" message="-h 20"/>
+        <echo file="work/db/compile.pf" append="true"/>
+        <echo file="work/db/compile.pf" append="true"
+            message="-db work/db/module -ld ${module} -RO"/>
+
+        <echo file="work/db/unittest.pf" message="-h 20"/>
+        <echo file="work/db/unittest.pf" append="true"/>
+        <echo file="work/db/unittest.pf" append="true"
+            message="-db work/db/module -ld ${module} -1"/>
+        
+        <echo file="work/db/entitymapping.pf" message="-h 20"/>
+        <echo file="work/db/entitymapping.pf" append="true"/>
+        
+    </target>
+
+    <target name="create-addon-dbs" depends="init,check-create-work-database" unless="work.database.exists">
+        <!-- Create a database per folder - excluding qaddb folder -->
+        <dirset id="addon.dbs" dir="${basedir}/">
+            <include name="schema/progress/**/*"/>
+            <exclude name="schema/progress/qaddb"/>
+        </dirset>
+        <create-db-per-folder db.dirset="addon.dbs" is.unittest="false"/>
+    </target>
+
+    <target name="create-unittest-dbs" depends="init,check-create-unittest-database" unless="test.database.exists">
+        <!-- Create unittest db's per folder -->
+        <dirset id="ut.dbs" dir="${basedir}/">
+            <include name="unittest/progress/schema/**/*"/>
+        </dirset>
+        <create-db-per-folder db.dirset="ut.dbs" is.unittest="true"/>
+        <antcall target="load-unittest-data"/>
+    </target>
+
+    <target name="load-unittest-data" depends="init,check-create-unittest-database" if="test.database.exists"
+        description="Load unit test data.">
+        <!-- load unit test dotd files per folder -->
+        <dirset id="ut.data.dbs" dir="${basedir}/">
+            <include name="unittest/progress/data/dotd/**/*"/>
+        </dirset>
+        <load-data-per-folder db.dirset="ut.data.dbs" is.unittest="true"/>
+    </target>
+
+    <target name="create-databases" depends="init,create-work-databases,create-avm-databases" />
+
+    <target name="create-avm-databases" depends="init,check-create-avm-database" if="create.avm.database">
+        <fail message="Can't create avm\db\module.db - work\db\module.db is not available. Execute 'create-database' task to create it. ">
+            <condition>
+                <not>
+                    <available file="work/db/module.db"/>
+                </not>
+            </condition>
+        </fail>
+        <mkdir dir="avm/db"/>
+        <delete>
+            <fileset dir="avm/db" includes="**/*"/>
+        </delete>
+        <fileset id="db.ref" dir="work/db">
+            <include name="**/*.db"/>
+        </fileset>
+        <for param="db">
+            <fileset refid="db.ref"/>
+            <sequential>
+                <local name="dbname"/>
+                <local name="prodb.result"/>
+                <basename property="dbname" file="@{db}" suffix=".db"/>
+                <exec executable="${DLC}/bin/prodb" resultproperty="prodb.result">
+                    <env key="DLC" value="${DLC}"/>
+                    <arg value="avm/db/${dbname}"/>
+                    <arg value="work/db/${dbname}"/>
+                </exec>
+                <fail message="Failed to copy database 'work/db/${dbname}' to 'avm/db/${dbname}'.">
+                    <condition>
+                        <isfailure code="${prodb.result}"/>
+                    </condition>
+                </fail>
+            </sequential>
+        </for>
+    </target>
+
+    <target name="check-create-work-database">
+        <condition property="work.database.exists">
+            <available file="work/db/module.db"/>
+        </condition>
+    </target>
+
+    <target name="check-create-unittest-database">
+        <condition property="test.database.exists">
+            <resourcecount when="greater" count="0">
+                <fileset dir="work/db" includes="*-ut.db" erroronmissingdir="false" />
+            </resourcecount>
+        </condition>
+    </target>
+
+    <target name="check-create-avm-database" depends="check-avm-database-exists, check-avm-database-locked, warn-avm-database-locked" >
+        <condition property="create.avm.database">
+            <and>
+                <not>
+                    <isset property="avm.database.locked" />
+                </not>
+                <not>
+                    <isset property="avm.database.exists" />
+                </not>
+            </and>
+        </condition>
+    </target>
+
+    <target name="clean-avm-database" depends="check-avm-database-locked" unless="${avm.database.locked}">
+        <delete dir="avm"/>
+    </target>
+
+    <target name="check-avm-database-locked">
+        <available file="avm/db/module.lk"
+            property="avm.database.locked" value="true"/>
+    </target>
+
+    <target name="warn-avm-database-locked" if="avm.database.locked">
+        <echo message="Databases in avm/db/ were not re-created."/>
+        <echo message="If you wish to recreate these:"/>
+        <echo message=" - disconnect databases from your avm session"/>
+        <echo message=" - execute the 'create-avm-databases' ant task."/>
+    </target>
+
+    <target name="check-avm-database-exists" >
+        <available file="avm/db/module.db"
+            property="avm.database.exists" value="true"/>
+    </target>
+
+    <target name="check-webservices" depends="init" unless="webservices.uptodate">
+
+        <uptodate property="webservices.uptodate"
+            targetfile="work/gen/last-generated.txt">
+            <srcfiles dir="src/api">
+                <include name="**/*.cls"/>
+                <include name="**/*.p"/>
+                <include name="**/*.i"/>
+            </srcfiles>
+        </uptodate>
+
+    </target>
+
+
+    <target name="compile-api" depends="init,generate-plugin-connector" unless="api.uptodate">
+
+        <tstamp> 
+            <format property="compile-api.timestamp" pattern="MM/dd/yyyy hh:mm a"/> 
+        </tstamp>
+        <mkdir dir="work/rcode"/>
+
+        <PCTCompile destDir="work/rcode" dlcHome="${DLC}" cpInternal="utf-8"
+            inputChars="32000" stackSize="128" tempDir="${java.io.tmpdir}">
+            <propath>
+                <pathelement path="src/api"/>
+                <pathelement path="work/pluginconnector/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <fileset dir="src/api">
+                <include name="**/*.cls"/>
+                <include name="**/*.p"/>
+            </fileset>
+            <fileset dir="work/pluginconnector/api" erroronmissingdir="false">
+                <include name="**/*.cls"/>
+            </fileset>
+			<fileset dir="lib/qracore-api/src" erroronmissingdir="false">
+				<include name="**/JavaTransactionHandler.p"/>
+			</fileset>
+        </PCTCompile>
+        <mkdir dir="work/.compile-api"/>
+        <copy todir="work/.compile-api" preservelastmodified="true">
+            <fileset dir="work/rcode">
+                <include name="**/*.r"/>
+	            <and>
+                   <date datetime="${compile-api.timestamp}" when="after"/>
+	               <present present="both" targetdir="src/api">
+	                  <mapper type="glob" from="*.r" to="*.cls"/>
+	               </present>
+	            </and> 
+            </fileset>
+            <fileset dir="work/rcode">
+                <include name="**/*.r"/>
+                <and>
+                    <date datetime="${compile-api.timestamp}" when="after"/>
+                    <present present="both" targetdir="work/pluginconnector/api">
+                        <mapper type="glob" from="*.r" to="*.cls"/>
+                    </present>
+                </and> 
+            </fileset>
+        </copy>
+    </target>
+
+    <target name="compile-baseclass" depends="baseclass" unless="base.cls.uptodate"> 
+
+        <mkdir dir="work/rcode"/>
+        <PCTCompile destDir="work/rcode" dlcHome="${DLC}" cpInternal="utf-8"
+            listing="${compile.listing}" xmlXref="${compile.xmlxref}" keepXref="${compile.keepxref}" 
+            inputChars="32000" stackSize="128" tempDir="${java.io.tmpdir}">
+            <propath>
+                <pathelement path="src/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <fileset dir="work/baseclass">
+                <include name="**/*.cls"/>
+            </fileset>
+        </PCTCompile>
+
+    </target>
+
+    <target name="compile-ebeclass" depends="generate-ebeclass" unless="ebe.cls.uptodate"> 
+        <mkdir dir="work/rcode"/>
+        <PCTCompile destDir="work/rcode" dlcHome="${DLC}" cpInternal="utf-8"
+            listing="${compile.listing}" xmlXref="${compile.xmlxref}" keepXref="${compile.keepxref}" 
+            inputChars="32000" stackSize="128" tempDir="${java.io.tmpdir}">
+            <propath>
+                <pathelement path="src/api"/>
+                <pathelement path="work/ebeclass"/>
+                <pathelement path="work/pluginconnector/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <fileset dir="work/ebeclass">
+                <include name="**/*.cls"/>
+            </fileset>
+        </PCTCompile>
+    </target>
+    <target name="compile-impl" depends="compile-api,compile-baseclass,compile-ebeclass,create-databases,generate-webservices,generate-facade-transaction-proxy,generate-distributed-proxy"
+        unless="skip.impl">
+
+        <mkdir dir="work/rcode"/>
+        <PCTCompile destDir="work/rcode" dlcHome="${DLC}" cpInternal="utf-8"
+            listing="${compile.listing}" xmlXref="${compile.xmlxref}" keepXref="${compile.keepxref}" 
+            inputChars="32000" stackSize="128" tempDir="${java.io.tmpdir}" paramFile="work/db/compile.pf">
+            <propath>
+                <pathelement path="src/api"/>
+                <pathelement path="src/impl"/>
+                <pathelement path="work/pluginconnector/api"/>
+                <pathelement path="work/pluginconnector/impl"/>
+                <pathelement path="${api.path.depends}"/>
+                <pathelement path="${impl.path.depends}"/>
+                <pathelement path="${DLC}/tty/netlib/OpenEdge.Net.pl"/>
+            </propath>
+            <fileset dir="src/impl">
+                <include name="**/*.cls"/>
+                <include name="**/*.p"/>
+            </fileset>
+
+            <fileset dir="work/gen">
+                <include name="**/*.p"/>
+            </fileset>
+
+            <fileset dir="work/facades/src">
+                <include name="**/*.cls"/>
+            </fileset>
+            
+            <fileset dir="work/distributed/src">
+                <include name="**/*.cls"/>
+                <include name="**/*.p"/>
+            </fileset>
+
+            <fileset dir="work/pluginconnector/impl" erroronmissingdir="false">
+                <include name="**/*.cls"/>
+            </fileset>
+
+        </PCTCompile>
+
+    </target>
+
+    <target name="compile-test" depends="compile-impl">
+
+        <mkdir dir="work/rcode/test"/>
+
+        <PCTCompile destDir="work/rcode/test" dlcHome="${DLC}" cpInternal="utf-8"
+            listing="${compile.listing}" xmlXref="${compile.xmlxref}" keepXref="${compile.keepxref}" 
+            inputChars="32000" stackSize="128" tempDir="${java.io.tmpdir}" paramFile="work/db/unittest.pf">
+            <propath>
+                <pathelement path="src/api"/>
+                <pathelement path="src/impl"/>
+                <pathelement path="work/ebeclass"/>				
+                <pathelement path="work/pluginconnector/api"/>
+                <pathelement path="work/pluginconnector/impl"/>
+                <pathelement path="src/test"/>
+                <pathelement path="${api.path.depends}"/>
+                <pathelement path="${impl.path.depends}"/>
+                <pathelement path="${test.path.depends}"/>
+                <pathelement path="${DLC}/tty/netlib/OpenEdge.Net.pl"/>
+                <pathelement path="lib/oeunit-qad/src"/>
+            </propath>
+            <fileset dir="src/test">
+                <include name="**/*.cls"/>
+                <include name="**/*.p"/>
+            </fileset>
+        </PCTCompile>
+
+    </target>
+
+    <target name="compile" depends="compile-test"/>
+	
+	<target name="compile-run-xref" depends="compile-api,compile-baseclass,create-databases,generate-webservices,generate-facade-transaction-proxy,generate-distributed-proxy"
+        unless="skip.impl">
+
+        <mkdir dir="work/rcode"/>
+        <PCTCompile destDir="work/rcode" dlcHome="${DLC}" cpInternal="utf-8"
+            inputChars="32000" stackSize="128" tempDir="${java.io.tmpdir}" paramFile="work/db/compile.pf" 
+			keepXref="true" listing="true" xrefDir="work/xref/">
+            <propath>
+                <pathelement path="src/api"/>
+                <pathelement path="src/impl"/>
+                <pathelement path="${api.path.depends}"/>
+                <pathelement path="${impl.path.depends}"/>
+                <pathelement path="${DLC}/tty/netlib/OpenEdge.Net.pl"/>
+            </propath>
+            <fileset dir="src/impl">
+                <include name="**/*.cls"/>
+                <include name="**/*.p"/>
+            </fileset>
+
+            <fileset dir="work/gen">
+                <include name="**/*.p"/>
+            </fileset>
+
+            <fileset dir="work/facades/src">
+                <include name="**/*.cls"/>
+            </fileset>
+            
+            <fileset dir="work/distributed/src">
+                <include name="**/*.cls"/>
+                <include name="**/*.p"/>
+            </fileset>
+
+        </PCTCompile>
+	</target>
+
+    <target name="check-api" depends="init" unless="api.uptodate">
+
+        <uptodate property="api.uptodate"
+            targetfile="dist/${module}-api-${build.instance.version}.zip">
+            <srcfiles dir=".">
+                <include name="work/${module.key}-api/**/*"/>
+            </srcfiles>
+        </uptodate>
+
+    </target>
+
+    <target name="package-api" depends="prep-api,create-api-package"/>
+
+    <target name="define-api-spec">
+        <edit-package-spec refid="api.spec">
+            <package-specification>
+                <package-meta>
+                    <package>
+                        <class>${module}</class>
+                        <type>qra-api</type>
+                        <reference><depends>qra-module-installer</depends></reference>
+                        <attributes>
+                            <attribute>
+                                <key>module.uri</key>
+                                <value>${module.uri}</value>
+                            </attribute>
+                            <attribute>
+                                <key>module.key</key>
+                                <value>${module.key}</value>
+                            </attribute>
+                            <attribute>
+                                <key>version-standard</key>
+                                <value>${version.standard}</value>
+                            </attribute>
+                        </attributes>
+                    </package>
+                </package-meta>
+            </package-specification>
+        </edit-package-spec>
+    </target>
+
+    <target name="define-api-developer" if="yab.developer">
+        <edit-package-spec refid="api.spec">
+            <attribute>yab.developer=true</attribute>
+        </edit-package-spec>
+    </target>
+
+    <target name="create-api-package"
+        depends="check-api,apidocs,define-api-spec,define-api-developer" unless="api.uptodate">
+        <create-package dir="dist" packageClass="${module}-api" version="${build.instance.version}" refid="api.spec">
+            <fileset dir="work/${module.key}-api" archivePath="src">
+                <exclude name="java"/>
+            </fileset>
+            <fileset dir="work/${module.key}-api/java" archivePath="java"/>
+            <fileset dir="work/doc" archivePath="doc">
+                <exclude name="last-generated.txt"/>
+            </fileset>
+            <source>
+                <wcpath>.</wcpath>
+            </source>
+        </create-package>
+
+    </target>
+
+    <target name="prep-api" depends="init,compile-api,compile-baseclass">
+        <fail unless="module.uri">Property 'module.uri' must be set.</fail>
+        <property name="module-api.dir" value="work/${module.key}-api"/>
+
+        <mkdir dir="dist"/>
+
+        <copy todir="${module-api.dir}" preservelastmodified="true"
+            verbose="${copyverbose}">
+            <fileset dir="src/api">
+                <exclude name="**/*.r"/>
+            </fileset>
+            <fileset dir="work/baseclass">
+                <exclude name="**/*.r"/>
+                <exclude name="**/.gen/"/>
+            </fileset>
+        </copy>
+
+    </target>
+
+    <target name="proxygen">
+
+        <outofdate>
+            <sourcefiles>
+                <pathelement path="${xpxgfile}"/>
+            </sourcefiles>
+            <targetfiles>
+                <pathelement path="${xpxgfile}.proxygen.executed"/>
+            </targetfiles>
+
+            <sequential>
+                <if>
+                    <os family="windows"/>
+                    <then>
+                        <exec dir="work" executable="cmd" output="${basedir}\work\tmpproxygen.log">
+                            <env key="DLC" value="${DLC}"/>
+                            <arg value="/c"/>
+                            <arg value="${DLC}\bin\bproxygen.bat"/>
+                            <arg value="-xpxgfile"/>
+                            <arg value="${xpxgfile}"/>
+                        </exec>
+                    </then>
+
+                    <elseif>
+                        <os family="unix"/>
+                        <then>
+                            <exec dir="work" executable="${DLC}/bin/bproxygen" output="${basedir}/work/tmpproxygen.log">
+                                <env key="DLC" value="${DLC}"/>
+                                <arg value="-xpxgfile"/>
+                                <arg value="${xpxgfile}"/>
+                            </exec>
+                        </then>
+                    </elseif>
+                </if>
+                <fail message="Proxy Generation Failed">
+                    <condition>
+                        <not>
+                            <resourcecontains resource="${basedir}/work/tmpproxygen.log"
+                             substring="Proxy Generation Succeeded."/>
+                        </not>
+                    </condition>
+                </fail>
+
+                <!-- The following is to prevent log files being overwritten -->
+                <xmlproperty file="${xpxgfile}"/>
+                <move file="${destdir}/${WSAD.AppObject.Name}.log" tofile="${xpxgfile}.log" verbose="false"/>
+
+                <echo file="${xpxgfile}.proxygen.executed" message="${build.timestamp}"/>
+                <delete file="${basedir}/work/tmpproxygen.log" failonerror="false"/>
+            </sequential>
+        </outofdate>
+    </target>
+
+    <target name="baseclass"
+        depends="init,compile-api,check-baseclass"
+        description="Generate baseclass."
+        unless="base.cls.uptodate">
+
+        <mkdir dir="work/baseclass"/>
+
+        <fileset id="rcode.after.baseclass.lastgenerated" dir="work/.compile-api">
+            <include name="**/*.r"/>
+            <and>
+               <depend targetdir="work/baseclass/.gen">
+                  <mapper type="package" from="*.r" to="*.last-generated"/>
+               </depend>
+               <present present="both" targetdir="src/api">
+                  <mapper type="glob" from="*.r" to="*.cls"/>
+               </present>
+            </and>
+        </fileset>
+        <generate-baseclass destdir="work/baseclass" srcdir="${basedir}/src/api">
+            <propath>
+                <pathelement location="${basedir}/src/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <mappedresources>
+               <fileset refid="rcode.after.baseclass.lastgenerated"/>
+               <globmapper from="*.r" to="${basedir}/src/api/*.cls"/> 
+            </mappedresources>
+        </generate-baseclass>
+
+        <echo file="work/baseclass/last-generated.txt" message="${build.timestamp}"
+            level="info"/>
+    </target>
+
+
+    <target name="check-baseclass" depends="init" unless="base.cls.uptodate">
+        <uptodate property="base.cls.uptodate"
+            targetfile="work/baseclass/last-generated.txt">
+            <srcfiles dir="src/api">
+                <include name="**/*.cls"/>
+            </srcfiles>
+        </uptodate>
+    </target>
+
+    <target name="generate-plugin-connector"
+        depends="init"
+        description="Generate Plugin Connector class.">
+        <mkdir dir="work/pluginconnector"/>
+        <generate-plugin-connector destdir="work/pluginconnector" srcdir="${basedir}/src/api">
+            <propath>
+                <pathelement location="${basedir}/src/api"/>
+                <pathelement path="${api.path.depends}"/>
+                <pathelement path="${impl.path.depends}"/>
+                <pathelement path="${DLC}/tty/netlib/OpenEdge.Net.pl"/>
+            </propath>
+            <mappedresources>
+               <fileset dir="${basedir}/src" includes="plugin/*.xml"/>
+               <globmapper from="*.xml" to="${basedir}/src/*.xml"/> 
+            </mappedresources>
+        </generate-plugin-connector>
+    </target>
+
+    <target name="generate-ebeclass"
+        depends="init,compile-api,check-ebeclass,generate-ebeclass-api,generate-ebeclass-pluginconnector"
+        unless="ebe.cls.uptodate">
+
+        <echo file="work/ebeclass/last-generated.txt" message="${build.timestamp}"
+            level="info"/>
+    </target>
+
+    <target name="generate-ebeclass-api" depends="init">
+        <mkdir dir="work/ebeclass"/>
+        <fileset id="rcode.after.ebeclass.lastgenerated" dir="work/.compile-api">
+            <include name="**/*.r"/>
+            <and>
+               <depend targetdir="work/ebeclass/.gen">
+                  <mapper type="package" from="*.r" to="*.last-generated"/>
+               </depend>
+               <present present="both" targetdir="src/api">
+                  <mapper type="glob" from="*.r" to="*.cls"/>
+               </present>
+            </and>
+        </fileset>
+        <generate-ebeclass destdir="work/ebeclass" srcdir="${basedir}/src/api">
+            <propath>
+                <pathelement location="${basedir}/src/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <mappedresources>
+               <fileset refid="rcode.after.ebeclass.lastgenerated"/>
+               <globmapper from="*.r" to="${basedir}/src/api/*.cls"/> 
+            </mappedresources>
+        </generate-ebeclass>
+    </target>
+    
+    <target name="generate-ebeclass-pluginconnector" depends="init">
+        <mkdir dir="work/ebeclass"/>
+        <fileset id="rcode.after.ebeclass.lastgenerated" dir="work/.compile-api">
+            <include name="**/*.r"/>
+            <and>
+               <depend targetdir="work/ebeclass/.gen">
+                  <mapper type="package" from="*.r" to="*.last-generated"/>
+               </depend>
+               <present present="both" targetdir="work/pluginconnector/api">
+                  <mapper type="glob" from="*.r" to="*.cls"/>
+               </present>
+            </and>
+        </fileset>
+        <generate-ebeclass destdir="work/ebeclass" srcdir="${basedir}/work/pluginconnector/api">
+            <propath>
+                <pathelement location="${basedir}/src/api"/>
+                <pathelement location="${basedir}/work/pluginconnector/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <mappedresources>
+               <fileset refid="rcode.after.ebeclass.lastgenerated"/>
+               <globmapper from="*.r" to="${basedir}/work/pluginconnector/api/*.cls"/> 
+            </mappedresources>
+        </generate-ebeclass>
+    </target>    
+    
+    <target name="check-ebeclass" depends="init" unless="ebe.cls.uptodate">
+        <uptodate property="ebe.cls.uptodate"
+            targetfile="work/ebeclass/last-generated.txt">
+            <srcfiles dir="src/api">
+                <include name="**/*.cls"/>
+            </srcfiles>
+            <srcfiles dir="work/pluginconnector/api" erroronmissingdir="false">
+                <include name="**/*.cls"/>
+                <include name="**/*.i"/>
+            </srcfiles>	    
+        </uptodate>
+    </target>
+
+    <target name="build-webservices" depends="init,compile-impl" unless="skip.webservice.proxies">
+
+        <mkdir dir="work/xpxg"/>
+
+        <for param="file">
+            <path>
+                <fileset dir="work/gen" includes="**/*.xpxg"/>
+            </path>
+            <sequential>
+                <antcall target="proxygen">
+                    <param name="xpxgfile" value="@{file}"/>
+                    <param name="destdir" value="work/xpxg"/>
+                </antcall>
+            </sequential>
+        </for>
+    </target>
+
+    <target name="check-library" depends="init" unless="library.uptodate">
+
+        <uptodate property="library.uptodate" targetfile="work/${module}.pl">
+            <srcfiles dir="work/rcode">
+                <include name="**/*.r"/>
+            </srcfiles>
+        </uptodate>
+
+    </target>
+
+    <!-- Create procedure library -->
+    <target name="create-library" depends="init,compile-impl,check-library"
+        unless="library.uptodate">
+
+        <!--
+        When the module is compiled, the created rcode includes rcode for API
+        source files in the lib directory. The next few tasks do the job of
+        ensuring that the only rcode that ends up in the procedure library is
+        that belonging to the module itself. It does this by only copying
+        directories from the work/rcode directory that have a counterpart in the
+        src/api, src/impl, work/ebeclass and work/gen directories.
+        -->
+
+        <copy todir="work/tmprcode" overwrite="false">
+            <dirset dir="src/api"/>
+            <dirset dir="src/impl"/>
+            <dirset dir="work/ebeclass"/>
+            <dirset dir="work/gen"/>
+            <dirset dir="work/distributed/src"/>
+        </copy>
+
+        <for param="file">
+            <dirset dir="work/tmprcode">
+            </dirset>
+            <sequential>
+                <propertyregex property="dirtocopy"
+                    override="true"
+                    input="@{file}"
+                    regexp="^.*(\\|\/)tmprcode(\\|\/)(.+)"
+                    select="\3/"
+                    defaultValue=""/>
+                <copy todir="work/tmprcode" overwrite="true" includeEmptyDirs="false">
+                    <fileset dir="work/rcode" includes="${dirtocopy}*"/>
+                </copy>
+            </sequential>
+        </for>
+
+        <PCTLibrary dlcHome="${DLC}" encoding="utf-8" destFile="work/${module}.pl" basedir="work/tmprcode">
+            <fileset dir="work/tmprcode">
+                <include name="**/*.r"/>
+            </fileset>
+        </PCTLibrary>
+
+        <delete dir="work/tmprcode" />
+
+        <!--
+        <exec executable="${DLC}/bin/prolib">
+            <arg value="work/${module}.pl"/>
+            <arg value="-list"/>
+        </exec>
+-->
+    </target>
+
+    <target name="dist" depends="package-module,package-api,package-progress-proxy"
+    description="Produce the module packages."/>
+
+    <target name="check-module" depends="init" unless="module.uptodate">
+
+        <uptodate property="module.uptodate"
+            targetfile="dist/${module}-${build.instance.version}.zip">
+
+            <srcfiles dir=".">
+                <include name="work/${module.key}/**/*"/>
+            </srcfiles>
+        </uptodate>
+
+    </target>
+
+    <target name="package-module" depends="prep-module,generate-data-manifest,create-module-package"/>
+
+    <target name="define-module-spec">
+        <edit-package-spec refid="module.spec" source="package-specification.xml">
+            <attribute>version-standard=${version.standard}</attribute>
+        </edit-package-spec>
+    </target>
+
+    <target name="define-module-developer" if="yab.developer">
+        <edit-package-spec refid="module.spec">
+            <attribute>yab.developer=true</attribute>
+        </edit-package-spec>
+    </target>
+
+    <target name="create-module-package"
+        depends="check-module,define-module-spec,define-module-developer" unless="module.uptodate">
+        <!-- If version number has not already been set then default it to 0.0.0.0. -->
+        <property name="build.instance.version" value="0.0.0.0"/>
+        <create-package dir="dist" packageClass="${module}" version="${build.instance.version}" refid="module.spec">
+            <fileset dir="work">
+                <include name="${module.key}/**/*"/>
+                <include name="yab/**/*"/>
+            </fileset>
+            <source>
+                <wcpath>.</wcpath>
+            </source>
+        </create-package>
+    </target>
+
+    <target name="generate-data-manifest" unless="data.manifest.uptodate">
+        <dirset id="data.contents" dir="work/${module.key}/data" excludes="progress/**,dotd/**,xml/**,qaddb/**,qadadm/**,qadhlp/**,fhd/**"/>
+        <property name="prop.data.contents" refid="data.contents"/>
+        <foreach list="${prop.data.contents}" param="data.content" delimiter=";" target="create-data-manifest"/>
+    </target>
+
+    <target name="create-data-manifest">
+        <property name="manifest.file" value="work/${module.key}/data/${data.content}/manifest.xml"/>
+        <echo file="${manifest.file}">&lt;?xml version="1.0" encoding="utf-8"?&gt;</echo>
+        <echo file="${manifest.file}" append="true">${line.separator}&lt;Files&gt;</echo>
+
+        <for param="file">
+            <path>
+                <fileset dir="work/${module.key}/data/${data.content}">
+                    <include name="*.xml"/>
+                    <exclude name="manifest.xml"/>
+                </fileset>
+            </path>
+            <sequential>
+                <local name="filename"/>
+                <basename property="filename" file="@{file}"/>
+                <echo file="${manifest.file}" append="true">${line.separator}  &lt;File&gt;</echo>
+                <echo file="${manifest.file}" append="true">${line.separator}    &lt;FileName&gt;${filename}&lt;&#47;FileName&gt;</echo>
+                <echo file="${manifest.file}" append="true">${line.separator}  &lt;&#47;File&gt;</echo>
+            </sequential>
+        </for>
+        <echo file="${manifest.file}" append="true">${line.separator}&lt;&#47;Files&gt;</echo>
+    </target>
+
+    <target name="get-bl-fileset" depends="get-bl-fileset-no-excludes, get-bl-fileset-excludes"/>
+
+    <target name="get-bl-fileset-no-excludes" unless="excludes.file.exists">
+        <fileset id="bl-fileset" dir=".">
+            <include name="**/*"/>
+            <exclude name="*"/>
+            <exclude name="avm/"/>
+            <exclude name="dist/"/>
+            <exclude name="dotnet/"/>
+            <exclude name="lib/"/>
+            <exclude name="src/"/>
+            <exclude name="java/.classpath"/>
+            <exclude name="java/.project"/>
+            <exclude name="java/README.txt"/>
+            <exclude name="java/src"/>
+            <exclude name="java/src/**"/>
+            <exclude name="work/"/>
+            <exclude name="yab/"/>
+        </fileset>
+    </target>
+
+    <target name="get-bl-fileset-excludes" if="excludes.file.exists">
+        <fileset id="bl-fileset" dir="." excludesfile="${excludes.file}">
+            <include name="**/*"/>
+            <exclude name="*"/>
+            <exclude name="avm/"/>
+            <exclude name="dist/"/>
+            <exclude name="dotnet/"/>
+            <exclude name="lib/"/>
+            <exclude name="src/"/>
+            <exclude name="java/.classpath"/>
+            <exclude name="java/.project"/>
+            <exclude name="java/README.txt"/>
+            <exclude name="java/src"/>
+            <exclude name="java/src/**"/>
+            <exclude name="work/"/>
+            <exclude name="yab/"/>
+        </fileset>
+    </target>
+
+    <target name="prep-module"
+        depends="init,compile-impl,create-library,build-webservices,generate-entitymetadata,generate-entitymapping,
+                 generate-translations,jar-java-api,get-bl-fileset"
+        unless="module.uptodate">
+        <fail unless="module.uri">Property 'module.uri' must be set.</fail>
+
+        <property name="module.dir" value="work/${module.key}"/>
+
+        <mkdir dir="dist"/>
+
+        <mkdir dir="${module.dir}/bin"/>
+        <mkdir dir="${module.dir}/schema"/>
+        <mkdir dir="${module.dir}/data"/>
+        <mkdir dir="${module.dir}/config"/>
+        <mkdir dir="${module.dir}/ws"/>
+
+        <copy todir="${module.dir}" preservelastmodified="true"
+            verbose="${copyverbose}" overwrite="true">
+            <fileset refid="bl-fileset"/>
+        </copy> 
+        
+        <copy todir="${module.dir}" preservelastmodified="true" includeEmptyDirs="true"
+            verbose="${copyverbose}" overwrite="true">
+            <fileset dir=".">
+                <include name="data/**/*"/>
+            </fileset>
+        </copy>
+
+        <copy file="work/${module}.pl" todir="${module.dir}/bin"
+            preservelastmodified="true" verbose="${copyverbose}"/>
+
+        <copy todir="${module.dir}/ws" preservelastmodified="true"
+            verbose="${copyverbose}">
+            <fileset dir="work/xpxg">
+                <include name="**/*.wsm"/>
+            </fileset>
+        </copy>
+
+        <if>
+            <equals arg1="${exclude.qra.artifacts}" arg2="true"/>
+            <then>
+                <copy todir="${module.dir}/data" preservelastmodified="true"
+                    verbose="${copyverbose}">
+                    <fileset dir="work/data">
+                        <include name="entity/*.xml"/>
+                        <include name="entitymapping/*.xml"/>
+                    </fileset>
+                </copy>
+            </then>
+            <else>
+                <copy todir="${module.dir}/data" preservelastmodified="true"
+                    verbose="${copyverbose}">
+                    <fileset dir="work/data">
+                        <include name="entity/*.xml"/>
+                        <include name="entitymapping/*.xml"/>
+                        <include name="services/*.xml"/>
+                        <include name="strings/*.xml"/>
+                    </fileset>
+                </copy>
+            </else>
+        </if>
+
+        <!-- Copy yab configuration to the root of the package stage area.-->
+        <copy todir="work" preservelastmodified="true"
+            verbose="${copyverbose}" overwrite="true">
+            <fileset dir=".">
+                <include name="yab/**/*"/>
+            </fileset>
+        </copy>
+
+        <copy todir="${module.dir}/schema" preservelastmodified="true"
+            verbose="${copyverbose}" overwrite="true">
+            <fileset dir="work/schema/imported" erroronmissingdir="false">
+                <include name="*.df"/>
+            </fileset>
+        </copy>
+
+        <tstamp>
+            <format property="build.instance.date" pattern="yyyy-MM-dd"/>
+        </tstamp>
+
+        <!-- "module.version" replaces "version", but for backwards
+             compatibility, leave "version" in also for now.
+        -->
+        <filter token="module.version" value="${build.instance.version}"/>
+        <filter token="version" value="${build.instance.version}"/>
+
+        <filter token="module.key" value="${module.key}"/>
+        <filter token="module.uri" value="${module.uri}"/>
+        <filter token="module.date" value="${build.instance.date}"/>
+
+        <copy todir="${module.dir}" preservelastmodified="true"
+            verbose="${copyverbose}" filtering="true">
+            <fileset dir=".">
+                <include name="config/**/*"/>
+            </fileset>
+        </copy>
+
+        <!-- This copies the updated module-config.xml with the transaction facades added (if any) -->
+        <copy todir="${module.dir}/config" preservelastmodified="true"
+            verbose="${copyverbose}" filtering="true">
+            <fileset dir="work/distributed/config">
+                <include name="module-config.xml"/>
+            </fileset>
+        </copy>
+
+        <copy todir="${module.dir}" preservelastmodified="true"
+            verbose="${copyverbose}">
+            <fileset dir=".">
+                <include name="installer-plugin.xml"/>
+                <include name="installer-plugin.build.xml"/>
+            </fileset>
+        </copy>
+
+    </target>
+
+    <target name="all" depends="clean,dist,test,apidocs"
+        description="Build and test everything; create a distribution."/>
+
+    <!-- =================================================================== -->
+
+    <target name="test" if="unit.test.program"
+        depends="init,unittest,sonar"
+        description="Run the unit tests for the module."/>
+
+    <target name="basictest" unless="${unit.test.coverage}" depends="init">
+        <antcall target="unittest"/>
+    </target>
+
+    <target name="coveragetest" if="${unit.test.coverage}" depends="init">
+        <antcall target="coverage"/>
+    </target>
+
+    <target name="unittest" if="unit.test.program"
+        depends="init,compile-test,delete-oeunit-rcode,generate-entitymetadata,generate-entitymapping,mkprofilerdir">
+
+        <PCTRun
+            inputChars="32000"
+            dlcHome="${DLC}"
+            procedure="${unit.test.program}"
+            stackSize="500"
+            paramFile="work/db/unittest.pf">
+
+            <propath refid="qra.test.propath"/>
+
+            <Profiler
+                enabled="${test.profile}"
+                description="Session Profile"
+                outputFile="work/profiler/profile.out"/>
+            
+        </PCTRun>
+
+    </target>
+
+    <target name="mkprofilerdir" if="test.profile">
+        <mkdir dir="work/profiler"/>
+    </target>
+    
+    <target name="memoryleaktest" if="unit.test.program"
+        depends="init,compile-test,delete-oeunit-rcode,generate-entitymetadata,generate-entitymapping"
+        description="Run the unit tests for the module and check for memoryleaks.">
+
+        <mkdir dir="work/memleaktest"/>
+
+        <echo file="work/memleaktest/memoryleaktests.p">
+            routine-level on error undo, throw.
+            using OEUnit.Util.Config.
+
+            define variable unitTestProg as character no-undo.
+            unitTestProg = DYNAMIC-FUNCTION('getParameter' IN SOURCE-PROCEDURE, INPUT 'unitTestProgramName').
+            OEUnit.Util.Config:SetRunTestTwice(true).
+            run value(unitTestProg).
+            return return-value.
+        </echo>
+
+        <PCTRun
+            dlcHome="${DLC}"
+            procedure="work/memleaktest/memoryleaktests.p"
+            debugPCT="true"
+            stackSize="500"
+            paramFile="work/db/unittest.pf">
+            <propath refid="qra.test.propath"/>
+            <Parameter name="unitTestProgramName" value="${unit.test.program}" />
+        </PCTRun>
+
+    </target>
+
+    <target name="profiler" if="unit.test.program"
+        depends="init,compile-test,delete-oeunit-rcode,generate-entitymetadata"
+        description="Run the module unit tests with the Progress Profiler enabled.">
+
+        <mkdir dir="work/profiler"/>
+
+        <echo file="work/profiler/profiler.p">
+            profiler:enabled = true.
+            profiler:directory = "work/profiler".
+            profiler:file-name = "work/profiler/profile.out".
+            profiler:listings = true.
+            profiler:description = "Session Profile".
+            profiler:profiling = yes.
+            profiler:trace-filter = "".
+
+            run ${unit.test.program}.
+
+            profiler:enabled = false.
+            profiler:profiling = false.
+            profiler:write-data().
+        </echo>
+
+        <PCTRun
+            dlcHome="${DLC}"
+            procedure="work/profiler/profiler.p"
+            stackSize="500"
+            paramFile="work/db/unittest.pf">
+
+            <propath refid="qra.test.propath"/>
+        </PCTRun>
+
+    </target>
+
+    <target name="coverage" if="unit.test.program"
+        depends="init,profiler,create-coverage-config"
+        description="Check code coverage.">
+
+        <mkdir dir="work/coverage"/>
+
+        <JustusCoverageTask
+            profileFile="${basedir}/work/profiler/profile.out"
+            sourcefolder="${basedir}/work/profiler"
+            resultFile="${basedir}/work/coverage/coverage.xml"
+            coverageConfig="${basedir}/work/coverage/coverage-config.xml"
+            noChecking="false"/>
+
+    </target>
+
+    <target name="justus" depends="init"
+        description="Launch Justus GUI">
+
+        <java classname="net.cordova.justus.coverage.gui.CoverageGUI"
+            fork="true" spawn="true">
+            <classpath refid="ant.lib.classpath" />
+        </java>
+
+    </target>
+
+    <target name="check-coverage-config" depends="init">
+
+        <mkdir dir="work/coverage"/>
+        <copy file="src/test/coverage-config.xml"
+            todir="work/coverage" preservelastmodified="true" overwrite="true"
+            verbose="${copyverbose}" failonerror="false">
+        </copy>
+
+        <available file="work/coverage/coverage-config.xml"
+            property="coverage.config.exists" value="true"/>
+
+    </target>
+
+    <target name="create-coverage-config" depends="init,check-coverage-config"
+        unless="${coverage.config.exists}">
+
+        <echo file="work/coverage/coverage-config.xml"><![CDATA[<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+            <JustusCoverage>
+                <category coverageRate="0" name="default">
+                    <include match="*"/>
+                </category>
+                <!-- Sample category
+    <category coverageRate="100" name="mymodule">
+        <include match="com.qad.mymodule.*"/>
+    </category>
+    -->
+            </JustusCoverage>
+        ]]>
+        </echo>
+    </target>
+
+    <target name="delete-oeunit-rcode">
+        <delete>
+            <fileset dir="lib/oeunit-qad/src" includes="**/*.r"/>
+        </delete>
+    </target>
+        
+    <target name="set-sonar-properties" if="sonar.host.url">
+        <property name="compile.listing" value="true"/>
+        <property name="compile.xmlxref" value="true"/>
+        <property name="compile.keepxref" value="true"/>
+        <property name="test.profile" value="true"/>
+    </target>
+    
+    <target name="sonar" xmlns:sonar="antlib:org.sonar.ant" depends="init" if="sonar.host.url">
+        
+        <!-- If version number has not already been set then default it to 0.0.0.0. -->
+        <property name="build.instance.version" value="0.0.0.0"/>
+        
+        <property name="sonar.projectKey" value="${module.key}" />
+        <property name="sonar.projectName" value="${module}-bl" />
+        <property name="sonar.projectVersion" value="${build.instance.version}" />
+        
+        <property name="sonar.sources" value="src/api,src/impl" />
+        <property name="sonar.tests" value="src/test" />
+        
+        <property name="sonar.oe.propath" value="${sonar.sources},${sonar.tests},${api.path.depends},${impl.path.depends},${test.path.depends}" />
+        <property name="sonar.oe.databases" value="schema/module.df" />
+        <property name="sonar.oe.coverage.profiler.dirs" value="work/profiler" />
+        <property name="sonar.oe.binaries" value="work/rcode" />
+        
+        <taskdef resource="org/sonar/ant/antlib.xml" classpathref="ant.lib.classpath" uri="antlib:org.sonar.ant"/>
+        
+        <!-- Execute SonarQube Scanner for Ant Analysis -->
+        
+        <trycatch reference="sonar.exceptionid">
+            <try>
+                <sonar:sonar/>
+            </try>
+            <catch>
+                <property name="sonar.exception" refid="sonar.exceptionid" />
+                <echo>Sonar scan failed with the following error, but this will not fail the build</echo>
+                <echo>${sonar.exception}</echo>
+            </catch>
+        </trycatch>
+        
+    </target>
+        
+    <!-- =================================================================== -->
+    <property name="maven.qad.repository" value="http://maven.qad.com"/>
+    <property name="maven.public.repository" value="https://repo1.maven.org/maven2"/>
+    <property name="maven.lib.file" location="maven.dependencies"/>
+    
+    <target name="update-maven-lib" depends="check-mavenlib-usage,process-mavenlib-file"/>
+
+    <target name="check-mavenlib-usage">
+        <fail unless="maven.qad.repository">The ANT property 'maven.qad.repository' must locate a QAD Maven Repository content path.</fail>
+        <fail unless="maven.public.repository">The ANT property 'maven.public.repository' must locate a QAD Maven Repository content path.</fail>
+        <fail unless="maven.lib.file">The ANT property 'maven.lib.file' must locate a file listing oe Maven dependencies one per line.</fail>
+    </target>
+
+    <target name="process-mavenlib-file"
+        depends="check-for-mavenlib-updates" if="maven.lib.file.changed">
+        <echo>Updating libs directory:</echo>
+        <concat>
+            <fileset file="${maven.lib.file.absolute}"/>
+        </concat>
+        <loadfile srcFile="${maven.lib.file.absolute}" property="maven.lib.file.text">
+            <filterchain>
+                <tokenfilter delimoutput=",">
+                    <trim/>
+                    <ignoreblank/>
+                </tokenfilter>
+            </filterchain>
+        </loadfile>
+
+        <delete dir="${maven.lib.dir}" includeEmptyDirs="true">
+            <patternset>
+                <include name="**/*"/>
+                <exclude name="cksum"/>
+            </patternset>
+        </delete>
+
+        <script language="javascript">
+            <![CDATA[
+            var libtext = project.getProperty('maven.lib.file.text');
+            if (libtext) {
+                var libs = libtext.split(',');
+                for(var i=0;i<libs.length;i++) {
+                    var pos = libs[i].lastIndexOf('-');
+                    if (pos != -1) {
+                        var libParts = libs[i].split(':');
+                        project.setProperty('maven.lib.groupId', libParts[0]);
+                        project.setProperty('maven.lib.artifactId', libParts[1]);
+                        project.setProperty('maven.lib.version', libParts[2]);
+                        project.setProperty('maven.lib.groupId.urlPart', libParts[0].replace('.', '/'));
+                        project.setProperty('maven.lib.groupId.dir', libParts[0].replace('.', '-'));
+                        project.setProperty('maven.lib.subrepository', libParts[3]);
+                        project.setProperty('maven.lib.repository.type', libParts[4]);
+                        project.executeTarget('update-mavenlib-library');
+                    }
+                }
+            }
+        ]]>
+        </script>
+        
+        <echo file="${maven.lib.dir}/cksum" message="${maven.lib.file.cksum.new}"/>
+
+    </target>
+
+    <target name="check-for-mavenlib-updates">
+
+        <property name="maven.lib.file.absolute" location="${maven.lib.file}"/>
+        <echo level="debug">Processing the OE Maven dependencies file: ${maven.lib.file.absolute}</echo>
+
+        <property name="maven.lib.dir" value="lib/maven_lib"/>
+        <echo level="debug">Using the storage directory: ${maven.lib.dir}</echo>
+
+        <loadfile srcFile="${maven.lib.dir}/cksum" failonerror="false" quiet="true" property="maven.lib.file.cksum.current"/>
+        <checksum file="${maven.lib.file.absolute}" format="CHECKSUM" property="maven.lib.file.cksum.new"/>
+
+        <mkdir dir="${maven.lib.dir}"/>
+        
+        <condition property="maven.lib.file.changed">
+            <not>
+                <equals arg1="${maven.lib.file.cksum.current}" arg2="${maven.lib.file.cksum.new}"/>
+            </not>
+        </condition>
+
+        <echo level="debug">>Checksum (current): ${maven.lib.file.cksum.current}</echo>
+        <echo level="debug">>Checksum (new): ${maven.lib.file.cksum.new}</echo>
+
+    </target>
+
+    <target name="update-mavenlib-library">
+        <taskdef resource="net/sf/antcontrib/antlib.xml" classpathref="ant.lib.classpath"/>
+        <if>
+            <equals arg1="${maven.lib.repository.type}" arg2="qad"/>
+            <then>
+                <get src="${maven.qad.repository}/service/local/repositories/${maven.lib.subrepository}/content/${maven.lib.groupId.urlPart}/${maven.lib.artifactId}/${maven.lib.version}/${maven.lib.artifactId}-${maven.lib.version}.jar"
+                     dest="${maven.lib.dir}/${maven.lib.artifactId}.jar"/>
+            </then>
+            <elseif>
+                <equals arg1="${maven.lib.repository.type}" arg2="public"/>
+                <then>
+                    <get src="${maven.public.repository}/${maven.lib.groupId.urlPart}/${maven.lib.artifactId}/${maven.lib.version}/${maven.lib.artifactId}-${maven.lib.version}.jar"
+                         dest="${maven.lib.dir}/${maven.lib.artifactId}.jar"/>
+                </then>
+            </elseif>
+        </if>
+    </target>
+
+    <!-- =================================================================== -->
+    <target name="update-qralib" depends="check-qralib-usage,process-qralib-file"/>
+
+    <target name="check-qralib-usage">
+        <fail unless="repository">The ANT property 'repository' must locate a QAD Packaging Repository.</fail>
+        <fail unless="qra.lib.file">The ANT property 'qra.lib.file' must locate a file listing oe dependencies one per line.</fail>
+    </target>
+
+    <target name="process-qralib-file"
+        depends="check-for-qralib-updates" if="qra.lib.file.changed">
+        <echo>Updating libs directory:</echo>
+        <concat>
+            <fileset file="${qra.lib.file.absolute}"/>
+        </concat>
+        <loadfile srcFile="${qra.lib.file.absolute}" property="qra.lib.file.text">
+            <filterchain>
+                <tokenfilter delimoutput=",">
+                    <trim/>
+                    <ignoreblank/>
+                </tokenfilter>
+            </filterchain>
+        </loadfile>
+
+        <delete dir="${qra.lib.dir}" includeEmptyDirs="true">
+            <patternset>
+                <include name="**/*"/>
+                <exclude name="cksum"/>
+                <exclude name="qra-build/*"/>
+            </patternset>
+        </delete>
+
+        <script language="javascript">
+            <![CDATA[
+            var libtext = project.getProperty('qra.lib.file.text');
+            if (libtext) {
+                var libs = libtext.split(',');
+                for(var i=0;i<libs.length;i++) {
+                    var pos = libs[i].lastIndexOf('-');
+                    if (pos != -1) {
+                        var packageClass = libs[i].substring(0, pos);
+                        project.setProperty('qra.lib.package.class', packageClass);
+                        project.setProperty('qra.lib.package.version', libs[i].substring(pos+1));
+                        project.executeTarget('update-qralib-library');
+                        if ("qracore-api" == packageClass) {
+                            project.executeTarget('get-qracore');
+                        }
+                    }
+                }
+            }
+        ]]>
+        </script>
+
+        <echo file="${qra.lib.dir}/cksum" message="${qra.lib.file.cksum.new}"/>
+
+    </target>
+
+    <target name="check-for-qralib-updates">
+
+        <property name="qra.lib.file.absolute" location="${qra.lib.file}"/>
+        <echo level="debug">Processing the OE dependencies file: ${qra.lib.file.absolute}</echo>
+
+        <property name="qra.lib.dir" location="lib"/>
+        <echo level="debug">Using the storage directory: ${qra.lib.dir}</echo>
+
+        <loadfile srcFile="${qra.lib.dir}/cksum" failonerror="false" quiet="true" property="qra.lib.file.cksum.current"/>
+        <checksum file="${qra.lib.file.absolute}" format="CHECKSUM" property="qra.lib.file.cksum.new"/>
+        <mkdir dir="${qra.lib.dir}"/>
+
+        <condition property="qra.lib.file.changed">
+            <not>
+                <equals arg1="${qra.lib.file.cksum.current}" arg2="${qra.lib.file.cksum.new}"/>
+            </not>
+        </condition>
+
+        <echo level="debug">Checksum (current): ${qra.lib.file.cksum.current}</echo>
+        <echo level="debug">Checksum (new): ${qra.lib.file.cksum.new}</echo>
+
+    </target>
+
+    <target name="update-qralib-library">
+
+        <get src="${repository}/packages/${qra.lib.package.class}/${qra.lib.package.version}/resources"
+            dest="${qra.lib.dir}/lib.zip"/>
+
+        <unzip src="${qra.lib.dir}/lib.zip"
+            dest="${qra.lib.dir}/${qra.lib.package.class}"/>
+
+        <delete file="${qra.lib.dir}/lib.zip"/>
+
+    </target>
+
+    <target name="get-qracore">
+        <property name="qracore.package" value="${repository}/packages/qracore/${qra.lib.package.version}/resources/qad.qra.core"/>
+        <get src="${qracore.package}/bin/qracore.pl" dest="${qra.lib.dir}"/>
+        <get src="${qracore.package}/java/qracore-impl.jar" dest="${qra.lib.dir}"/>
+        <get src="${qracore.package}/java/qracore-impl-src.jar" dest="${qra.lib.dir}" ignoreerrors="true"/>
+    </target>
+
+    <!-- Generates an xpxg project file for use by proxygen to create Java proxy
+         classes. Requires previous generation of web service stub programs.
+    -->
+    <target name="generate-xpxg-java"
+        depends="init,generate-webservices,check-xpxg-java"
+        unless="xpxg.java.uptodate">
+
+        <mkdir dir="work/xpxg-java"/>
+
+        <fileset id="rcode.after.javaxpxg.lastgenerated" dir="work/.compile-api">
+            <include name="**/*.r"/>
+            <and>
+               <depend targetdir="work/xpxg-java/.gen">
+                  <mapper type="package" from="*.r" to="*.last-generated"/>
+               </depend>
+               <present present="both" targetdir="src/api">
+                  <mapper type="glob" from="*.r" to="*.cls"/>
+               </present>
+            </and>
+        </fileset>
+        <generate-java-xpxg destdir="work/xpxg-java" srcdir="${basedir}/src/api">
+            <propath>
+                <pathelement location="${basedir}/src/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <mappedresources>
+               <fileset refid="rcode.after.javaxpxg.lastgenerated"/>
+               <globmapper from="*.r" to="${basedir}/src/api/*.cls"/> 
+            </mappedresources>
+        </generate-java-xpxg>
+
+        <echo file="work/xpxg-java/last-generated.txt" message="${build.timestamp}"
+            level="info"/>
+    </target>
+
+    <target name="check-xpxg-java" depends="init" unless="xpxg.java.uptodate">
+        <uptodate property="xpxg.java.uptodate"
+            targetfile="work/xpxg-java/last-generated.txt">
+            <srcfiles dir="work/gen">
+                <include name="**/wsstub/*.p"/>
+            </srcfiles>
+        </uptodate>
+    </target>
+
+    <target name="exec-proxygen-java"
+        depends="init,generate-xpxg-java,compile-impl,check-java-proxies"
+        unless="java.proxies.uptodate">
+
+        <mkdir dir="work/java/src/api"/>
+        <mkdir dir="work/java/src/impl"/>
+
+        <for param="file">
+            <path>
+                <fileset dir="work/xpxg-java" includes="**/*.xpxg"/>
+            </path>
+            <sequential>
+                <antcall target="proxygen">
+                    <param name="xpxgfile" value="@{file}"/>
+                    <param name="destdir" value="work/java/src/impl"/>
+                </antcall>
+            </sequential>
+        </for>
+
+        <echo file="work/java/proxies-last-generated.txt" message="${build.timestamp}"
+            level="info"/>
+
+    </target>
+
+    <target name="check-java-proxies" depends="init,check-skip-java-proxies" unless="java.proxies.uptodate">
+        <uptodate property="java.proxies.uptodate"
+            targetfile="work/java/proxies-last-generated.txt">
+            <srcfiles dir="work/xpxg-java">
+                <include name="**/*.xpxg"/>
+            </srcfiles>
+        </uptodate>
+    </target>
+
+    <target name="check-skip-java-proxies" if="skip.java.proxies">
+        <property name="java.proxies.uptodate" value="true"/>
+        <property name="java-api.uptodate" value="true"/>
+        <property name="xpxg.java.uptodate" value="true"/>
+    </target>
+
+    <target name="generate-java-api"
+        depends="init,exec-proxygen-java,check-java-api"
+        unless="java-api.uptodate">
+
+        <fileset id="rcode.after.javaapi.lastgenerated" dir="work/.compile-api">
+            <include name="**/*.r"/>
+            <and>
+               <depend targetdir="work/java/src/.gen">
+                  <mapper type="package" from="*.r" to="*.last-generated"/>
+               </depend>
+               <present present="both" targetdir="src/api">
+                  <mapper type="glob" from="*.r" to="*.cls"/>
+               </present>
+            </and>
+        </fileset>
+        <generate-java-api destdir="work/java/src" proxydir="work/java/src/impl" srcdir="${basedir}/src/api" 
+                           moduleName="${module}">
+            <propath>
+                <pathelement location="${basedir}/src/api"/>
+                <pathelement path="${api.path.depends}"/>
+            </propath>
+            <mappedresources>
+               <fileset refid="rcode.after.javaapi.lastgenerated"/>
+               <globmapper from="*.r" to="${basedir}/src/api/*.cls"/> 
+            </mappedresources>
+        </generate-java-api>
+
+        <echo file="work/java/src/java-api-last-generated.txt" message="${build.timestamp}"
+            level="info"/>
+
+    </target>
+
+    <target name="check-java-api" depends="init,check-skip-java-proxies" unless="java-api.uptodate">
+        <uptodate property="java-api.uptodate"
+            targetfile="work/java/src/java-api-last-generated.txt">
+            <srcfiles dir=".">
+                <include name="work/java/proxies-last-generated.txt"/>
+                <include name="java/src/**/*.java"/>
+            </srcfiles>
+        </uptodate>
+    </target>
+
+    <target name="compile-java-api" depends="init,generate-java-api">
+
+        <mkdir dir="work/java/bin/api"/>
+
+        <!-- Include non-generated code if there is any -->
+        <available property="api.compilation.path" file="java/src/api"
+            value="work/java/src/api:java/src/api"/>
+
+        <property name="api.compilation.path" value="work/java/src/api"/>
+
+        <javac destdir="work/java/bin/api" target="1.7" source="1.7" includeAntRuntime="false" debug="true" compiler="modern">
+            <classpath>
+                <!-- We need this for the SDO interface through which we access dynamic datasets -->
+                <pathelement location="${DLC}/java/ext/tuscany-sdo-api-r2.1-1.1.1.jar"/>
+                <!-- For a non-QraCore module, we need the qracore api jar -->
+                <pathelement location="lib/qracore-api/java/qracore-api.jar"/>
+                <!-- Other dependencies -->
+                <fileset dir="lib">
+                    <include name="guava/*.jar"/>
+                    <include name="jackson/*.jar"/>
+                    <include name="spring-core/*.jar"/>
+                    <include name="spring-beans/*.jar"/>
+                    <include name="spring-context/*.jar"/>
+                    <include name="spring-jdbc/*.jar"/>
+                    <include name="spring-security-acl/*.jar"/>
+                    <include name="spring-security-core/*.jar"/>
+                    <include name="spring-tx/*.jar"/>
+                </fileset>
+            </classpath>
+            <src path="${api.compilation.path}"/>
+        </javac>
+
+        <mkdir dir="work/java/bin/impl"/>
+
+        <!-- Include non-generated code if there is any -->
+        <available property="impl.compilation.path" file="java/src/impl"
+            value="work/java/src/impl:java/src/impl"/>
+
+        <property name="impl.compilation.path" value="work/java/src/impl"/>
+
+        <javac destdir="work/java/bin/impl" target="1.7" source="1.7" includeAntRuntime="false" debug="true" compiler="modern">
+            <classpath>
+                <!-- Implementation requires the API -->
+                <pathelement location="work/java/bin/api"/>
+                <!-- For non-QraCore module, we need the qracore jars -->
+                <pathelement location="lib/qracore-api/java/qracore-api.jar"/>
+                <pathelement location="lib/qracore-impl.jar"/>
+                <!-- OpenEdge dependencies -->
+                <pathelement location="${DLC}/java/o4glrt.jar"/>
+                <pathelement location="${DLC}/java/ext/tuscany-sdo-api-r2.1-1.1.1.jar"/>
+                <pathelement location="${DLC}/java/ext/tuscany-sdo-impl-1.1.1.jar"/>
+                <pathelement location="${DLC}/java/ext/ecore-2.2.3.jar"/>
+                <pathelement location="${DLC}/java/ext/common-2.2.3.jar"/>
+                <!-- Other dependencies -->
+                <fileset dir="lib">
+                    <include name="guava/*.jar"/>
+                    <include name="jackson/*.jar"/>
+                    <include name="spring-core/*.jar"/>
+                    <include name="spring-beans/*.jar"/>
+                    <include name="spring-context/*.jar"/>
+                    <include name="spring-jdbc/*.jar"/>
+                    <include name="spring-security-acl/*.jar"/>
+                    <include name="spring-security-core/*.jar"/>
+                    <include name="spring-tx/*.jar"/>
+                </fileset>
+            </classpath>
+            <src path="${impl.compilation.path}"/>
+        </javac>
+        
+        <condition property="rest.src.dir.exists">
+          <available file="work/java/src/rest" type="dir"/>
+        </condition>
+        
+        <if>
+            <equals arg1="${rest.src.dir.exists}" arg2="true" />
+        <then>
+            
+        <mkdir dir="work/java/bin/rest"/>
+
+        <!-- Include non-generated code if there is any -->
+        <available property="rest.compilation.path" file="java/src/rest"
+            value="work/java/src/rest:java/src/rest"/>
+
+        <property name="rest.compilation.path" value="work/java/src/rest"/>
+
+        <javac destdir="work/java/bin/rest" target="1.7" source="1.7" includeAntRuntime="false" debug="true" compiler="modern">
+            <classpath>
+                <!-- Implementation requires the API -->
+                <pathelement location="work/java/bin/api"/>
+                <pathelement location="work/java/bin/impl"/>
+                <!-- For non-QraCore module, we need the qracore jars -->
+                <pathelement location="lib/qracore-api/java/qracore-api.jar"/>
+                <pathelement location="lib/qracore-impl.jar"/>
+                <!-- OpenEdge dependencies -->
+                <pathelement location="${DLC}/java/o4glrt.jar"/>
+                <pathelement location="${DLC}/java/ext/tuscany-sdo-api-r2.1-1.1.1.jar"/>
+                <pathelement location="${DLC}/java/ext/tuscany-sdo-impl-1.1.1.jar"/>
+                <pathelement location="${DLC}/java/ext/ecore-2.2.3.jar"/>
+                <pathelement location="${DLC}/java/ext/common-2.2.3.jar"/>
+                <!-- Other dependencies -->
+                <fileset dir="lib">
+                    <include name="spring-beans/*.jar"/>
+                    <include name="spring-context/*.jar"/>
+                    <include name="maven_lib/*.jar"/>
+                </fileset>
+            </classpath>
+            <src path="${rest.compilation.path}"/>
+        </javac>
+      </then>
+      </if>
+    </target>
+
+    <target name="jar-java-api" depends="init,compile-java-api" unless="skip.java.proxies">
+
+        <mkdir dir="work/${module.key}/java"/>
+
+        <jar jarfile="work/${module.key}/java/${module}-api.jar">
+            <manifest>
+                <section name="QRA Java API for ${module.key}">
+                    <attribute name="Version" value="${build.instance.version}"/>
+                    <attribute name="Date" value="${TODAY}"/>
+                    <attribute name="Timestamp" value="${DSTAMP}${TSTAMP}"/>
+                </section>
+            </manifest>
+            <fileset dir="work/java/bin/api" includes="**/*.class"/>
+            <fileset dir="work" includes="**/*.ts"/>
+        </jar>
+
+        <jar jarfile="work/${module.key}/java/${module}-api-src.jar">
+            <manifest>
+                <section name="QRA Java API source for ${module.key}">
+                    <attribute name="Version" value="${build.instance.version}"/>
+                    <attribute name="Date" value="${TODAY}"/>
+                    <attribute name="Timestamp" value="${DSTAMP}${TSTAMP}"/>
+                </section>
+            </manifest>
+            <fileset dir="work/java/src/api" includes="**/*.java"/>
+            <fileset dir="java/src/api" includes="**/*.java" erroronmissingdir="false"/>
+            <fileset dir="work" includes="**/*.ts"/>
+        </jar>
+
+        <jar jarfile="work/${module.key}/java/${module}-impl.jar">
+            <manifest>
+                <section name="QRA Java API implementation for ${module.key}">
+                    <attribute name="Version" value="${build.instance.version}"/>
+                    <attribute name="Date" value="${TODAY}"/>
+                    <attribute name="Timestamp" value="${DSTAMP}${TSTAMP}"/>
+                </section>
+            </manifest>
+            <fileset dir="work/java/bin/impl" includes="**/*.class"/>
+        </jar>
+
+        <jar jarfile="work/${module.key}/java/${module}-impl-src.jar">
+            <manifest>
+                <section name="QRA Java API implementation source for ${module.key}">
+                    <attribute name="Version" value="${build.instance.version}"/>
+                    <attribute name="Date" value="${TODAY}"/>
+                    <attribute name="Timestamp" value="${DSTAMP}${TSTAMP}"/>
+                </section>
+            </manifest>
+            <fileset dir="work/java/src/impl" includes="**/*.java"/>
+            <fileset dir="java/src/impl" includes="**/*.java" erroronmissingdir="false"/>
+        </jar>
+
+        <if>
+           <equals arg1="${rest.src.dir.exists}" arg2="true" />
+        <then>
+        <jar jarfile="work/${module.key}/java/${module}-rest.jar">
+            <manifest>
+                <section name="QRA Java REST API implementation for ${module.key}">
+                    <attribute name="Version" value="${build.instance.version}"/>
+                    <attribute name="Date" value="${TODAY}"/>
+                    <attribute name="Timestamp" value="${DSTAMP}${TSTAMP}"/>
+                </section>
+            </manifest>
+            <fileset dir="work/java/bin/rest" includes="**/*.class"/>
+        </jar>
+
+        <jar jarfile="work/${module.key}/java/${module}-rest-src.jar">
+            <manifest>
+                <section name="QRA Java REST API implementation source for ${module.key}">
+                    <attribute name="Version" value="${build.instance.version}"/>
+                    <attribute name="Date" value="${TODAY}"/>
+                    <attribute name="Timestamp" value="${DSTAMP}${TSTAMP}"/>
+                </section>
+            </manifest>
+            <fileset dir="work/java/src/rest" includes="**/*.java"/>
+        </jar>
+        </then>
+        </if>
+
+        <mkdir dir="work/${module.key}-api/java"/>
+
+        <copy todir="work/${module.key}-api/java" file="work/${module.key}/java/${module}-api.jar"/>
+        <copy todir="work/${module.key}-api/java" file="work/${module.key}/java/${module}-api-src.jar"/>
+
+    </target>
+
+    <!-- ======== Progress Proxy ======== -->
+    <target name="check-progress-proxy" depends="init,check-skip-progress-proxies" unless="progress.proxy.uptodate">
+        <uptodate property="progress.proxy.uptodate"
+            targetfile="work/progress-proxy/last-generated.txt">
+            <srcfiles dir="config">
+                <include name="module-config.xml" />
+            </srcfiles>
+
+            <srcfiles dir="src/api">
+                <include name="**/*.cls"/>
+                <include name="**/*.p"/>
+                <include name="**/*.i"/>
+            </srcfiles>
+        </uptodate>
+    </target>
+
+    <target name="check-skip-progress-proxies" if="skip.progress.proxies">
+        <property name="progress.proxy.uptodate" value="true"/>
+        <property name="progress.proxy.library.uptodate" value="true"/>
+        <property name="facade.transaction.proxy.uptodate" value="true"/>
+        <property name="distributed.proxy.uptodate" value="true"/>
+    </target>
+
+    <target name="generate-progress-proxy"
+            depends="check-progress-proxy"
+            unless="progress.proxy.uptodate">
+        <mkdir dir="work/progress-proxy" />
+
+        <tstamp>
+            <format property="build.instance.date" pattern="yyyy-MM-dd"/>
+        </tstamp>
+        <filter token="module.version" value="${build.instance.version}"/>
+        <filter token="version" value="${build.instance.version}"/>
+
+        <filter token="module.key" value="${module.key}"/>
+        <filter token="module.uri" value="${module.uri}"/>
+        <filter token="module.date" value="${build.instance.date}"/>
+
+        <copy todir="work/progress-proxy" preservelastmodified="true"
+            verbose="${copyverbose}" filtering="true">
+            <fileset dir="config">
+                <include name="module-config.xml"/>
+            </fileset>
+        </copy>
+
+        <generate-progress-proxy moduleConfig="work/progress-proxy/module-config.xml"
+                               destModuleConfig="work/progress-proxy/module-config-proxy.xml"
+                               destdir="work/progress-proxy">
+            <propath>
+                <pathelement location="${basedir}/src/api"/>
+                <pathelement path="${api.path.depends}"/>
+                <pathelement path="${impl.path.depends}"/>
+            </propath>
+        </generate-progress-proxy>
+    </target>
+
+    <target name="compile-progress-proxy" depends="generate-progress-proxy,generate-webservices" unless="progress.proxy.uptodate">
+
+        <mkdir dir="work/progress-proxy-rcode"/>
+
+        <PCTCompile destDir="work/progress-proxy-rcode" dlcHome="${DLC}" cpInternal="utf-8"
+            inputChars="32000" stackSize="128" tempDir="${java.io.tmpdir}">
+            <propath>
+                <pathelement path="src/api"/>
+                <pathelement path="${api.path.depends}"/>
+                <pathelement path="${impl.path.depends}"/>
+            </propath>
+            <fileset dir="src/api">
+                <include name="**/*.cls"/>
+                <include name="**/*.p"/>
+            </fileset>
+            <fileset dir="work/gen">
+                <include name="**/*.p"/>
+            </fileset>
+            <fileset dir="work/progress-proxy">
+                <include name="**/*.cls"/>
+            </fileset>
+        </PCTCompile>
+
+    </target>
+
+    <target name="create-progress-proxy-library" depends="compile-progress-proxy" unless="progress.proxy.library.uptodate">
+        <PCTLibrary dlcHome="${DLC}" encoding="utf-8" destFile="work/${module}-proxy.pl" basedir="work/progress-proxy-rcode">
+            <fileset dir="work/progress-proxy-rcode">
+                <include name="**/*.r"/>
+            </fileset>
+        </PCTLibrary>
+    </target>
+
+    <target name="define-proxy-spec">
+        <edit-package-spec refid="proxy.spec">
+            <package-specification>
+                <package-meta>
+                    <package>
+                        <class>${module}-proxy</class>
+                        <type>qra-proxy</type>
+                        <attributes>
+                            <attribute>
+                                <key>module.uri</key>
+                                <value>${module.uri}-proxy</value>
+                            </attribute>
+                            <attribute>
+                                <key>module.key</key>
+                                <value>${module.key}</value>
+                            </attribute>
+                            <attribute>
+                                <key>version-standard</key>
+                                <value>${version.standard}</value>
+                            </attribute>
+                        </attributes>
+                    </package>
+                </package-meta>
+            </package-specification>
+        </edit-package-spec>
+    </target>
+
+    <target name="define-proxy-developer" if="yab.developer">
+        <edit-package-spec refid="proxy.spec">
+            <attribute>yab.developer=true</attribute>
+        </edit-package-spec>
+    </target>
+
+    <target name="prep-progress-proxy" depends="create-progress-proxy-library,define-proxy-spec,define-proxy-developer"
+            unless="skip.progress.proxies">
+        <property name="proxy.dir" value="work/${module.key}-proxy"/>
+
+        <mkdir dir="${proxy.dir}" />
+        <mkdir dir="${proxy.dir}/config" />
+        <mkdir dir="${proxy.dir}/bin" />
+
+        <copy file="work/progress-proxy/module-config-proxy.xml"
+            tofile="${proxy.dir}/config/module-config.xml" />
+
+        <copy file="work/${module}-proxy.pl"
+            todir="${proxy.dir}/bin/" />
+    </target>
+
+    <target name="create-progress-proxy-package"
+        depends="prep-progress-proxy" unless="skip.progress.proxies">
+        <create-package dir="dist" packageClass="${module}-proxy" version="${build.instance.version}" refid="proxy.spec">
+            <fileset dir="work">
+                <include name="${module.key}-proxy/**/*"/>
+            </fileset>
+            <source>
+                <wcpath>.</wcpath>
+            </source>
+        </create-package>
+
+    </target>
+
+    <target name="package-progress-proxy" depends="prep-progress-proxy,create-progress-proxy-package"/>
+
+    <target name="get-svn-info" depends="init,load-properties-local"
+        unless="build.instance.type.local">
+
+        <exec osfamily="windows" executable="cmd" failonerror="true"
+            outputproperty="svn.info" dir=".">
+            <arg value="/c"/>
+            <arg value="svn info"/>
+        </exec>
+
+        <exec osfamily="unix" executable="svn" failonerror="false"
+            outputproperty="svn.info" dir=".">
+            <arg value="info"/>
+        </exec>
+
+        <echo message="Results of 'svn info'"/>
+        <echo>${svn.info}</echo>
+
+        <property name="svn.regexp"
+            value="\r?\nURL: (.*)\/(trunk|branches\/[^\/]+)"/>
+
+        <propertyregex property="svn.baseurl" input="${svn.info}"
+            regexp="${svn.regexp}" select="\1"/>
+        <propertyregex property="svn.branch" input="${svn.info}"
+            regexp="${svn.regexp}" select="\2"/>
+        <!-- The tag path depends on MAJOR.MINOR from the version -->
+        <propertyregex property="svn.major.minor" input="${build.instance.version}"
+            regexp="^([0-9]+\.[0-9]+)\." select="\1"/>
+
+        <condition property="instance.url"
+            value="${svn.baseurl}/${svn.branch}"
+            else="${svn.baseurl}/tags/${svn.major.minor}/${build.instance.version}">
+
+            <equals arg1="${build.instance.version}" arg2="0.0.0.0"/>
+        </condition>
+
+    </target>
+
+    <target name="buildbl" depends="init,load-properties,ckoutbl,showconfig"
+            description="Execute the business logic build.">
+
+        <ant antfile="${build.instance.directory}/build.xml"
+                inheritAll="false" useNativeBasedir="true">
+            <property name="build.instance.version" value="${build.instance.version}"/>
+            <target name="dist"/>
+            <target name="test"/>
+        </ant>
+
+        <!-- Copy the module bl for publication -->
+        <copy todir="dist" preservelastmodified="true" verbose="true"
+                file="${build.instance.directory}/dist/${module}-${build.instance.version}.zip"/>
+
+        <!-- Also copy the module api for publication -->
+        <copy todir="dist" preservelastmodified="true" verbose="true"
+                file="${build.instance.directory}/dist/${module}-api-${build.instance.version}.zip"/>
+
+        <!-- Also copy the module proxy for publication -->
+        <copy todir="dist" preservelastmodified="true" verbose="true"
+                file="${build.instance.directory}/dist/${module}-proxy-${build.instance.version}.zip"/>
+    </target>
+
+    <target name="ckoutbl" depends="init,load-properties" unless="build.instance.type.local">
+
+        <mkdir dir="${build.instance.directory}"/>
+
+        <echo message="Build instance directory == ${build.instance.directory}"/>
+        <echo message="Build instance URL == ${instance.url}"/>
+
+        <exec osfamily="windows" executable="cmd"  failonerror="true"
+            dir="${build.instance.directory}">
+
+            <arg value="/c"/>
+            <arg value="svn checkout ${instance.url} ${build.instance.directory}"/>
+        </exec>
+
+        <exec osfamily="unix" executable="svn" failonerror="true"
+            dir="${build.instance.directory}">
+
+            <arg value="checkout"/>
+            <arg value="--username"/><arg value="svnuser"/>
+            <arg value="--password"/><arg value="resUnvs1"/>
+            <arg value="--config-dir"/><arg value="/users/svnuser/.subversion"/>
+            <arg value="${instance.url}"/>
+            <arg value="${build.instance.directory}"/>
+        </exec>
+
+    </target>
+
+    <target name="showconfig" depends="init,load-properties"
+        description="Display the current configuration.">
+        <concat>
+            <fileset file="instance.properties"/>
+        </concat>
+    </target>
+
+    <target name="publish" depends="init,load-properties"
+        description="Publish the module package to the package repository.">
+
+        <fail unless="build.instance.type.release"
+            message="This instance has not been configured for release"/>
+
+        <fail message="The release packages are not available">
+            <condition>
+                <not>
+                    <and>
+                      <available file="dist/${module}-${build.instance.version}.zip"/>
+                      <available file="dist/${module}-api-${build.instance.version}.zip"/>
+                      <available file="dist/${module}-proxy-${build.instance.version}.zip"/>
+                    </and>
+                </not>
+            </condition>
+        </fail>
+
+        <publish-package repository="${repository}">
+
+            <!-- Publish the combined UI/BL module package -->
+            <fileset dir="dist">
+                <include name="${module}-${build.instance.version}.zip"/>
+            </fileset>
+
+            <!-- Publish the module API package -->
+            <fileset dir="dist">
+                <include name="${module}-api-${build.instance.version}.zip"/>
+            </fileset>
+
+            <!-- Publish the module proxy package -->
+            <fileset dir="dist">
+                <include name="${module}-proxy-${build.instance.version}.zip"/>
+            </fileset>
+        </publish-package>
+
+    </target>
+
+    <target name="get-local-properties">
+        <property name="build.instance.type.local" value="true"/>
+    </target>
+
+    <target name="get-version-properties">
+        <fail message="The version to build must be specified. Use -Dset.version=1.2.3.4">
+          <condition><not><isset property="set.version"/></not></condition>
+        </fail>
+        <property name="build.instance.type.version" value="true"/>
+        <property name="build.instance.version" value="${set.version}"/>
+    </target>
+
+    <target name="get-latest-properties">
+        <property name="build.instance.type.latest" value="true"/>
+    </target>
+
+    <!-- =================================================================== -->
+    <!--
+        Stores the user's authentication credentials securely on the host to
+        allow secured operations to run non-interactively without storing
+        passwords in the clear.
+        This target should be run interactively, from the command line.
+    -->
+    <target name="auth" depends="init"
+        description="Cache SVN credential information securely.">
+
+        <input message="Username:" addproperty="username"/>
+        <input message="Password:" addproperty="password">
+            <handler type="secure"/>
+        </input>
+
+        <fail unless="username" message="Expecting user credentials (i.e. -Dusername=wtb -Dpassword=mysecret)."/>
+        <fail unless="password" message="Expecting user credentials (i.e. -Dusername=wtb -Dpassword=mysecret)."/>
+
+        <set-credentials username="${username}" password="${password}"/>
+    </target>
+
+    <!-- =================================================================== -->
+    <!--
+        Publishes the module API documentation.
+    -->
+    <target name="publish-docs" depends="init,load-properties"
+        description="Publish documentation to an opensite server.">
+
+        <taskdef name="http" classname="org.missinglink.ant.task.http.HttpClientTask">
+            <classpath refid="ant.lib.classpath"/>
+        </taskdef>
+
+        <fail message="An api.documentation.url property must be configured to point to an opensite instance location to which the documentation will be published."
+            unless="api.documentation.url"/>
+
+        <unzip src="dist/${module}-api-${build.instance.version}.zip" dest="work">
+            <patternset includes="data.zip"/>
+        </unzip>
+
+        <unzip src="work/data.zip" dest="work">
+            <patternset includes="doc/**/*"/>
+        </unzip>
+
+        <zip destfile="work/doc.zip">
+            <fileset dir="work/doc"/>
+        </zip>
+
+        <http url="${api.documentation.url}" method="POST">
+            <headers>
+                <header name="Content-Type" value="application/zip"/>
+            </headers>
+            <query>
+                <parameter name="clean" value="true"/>
+            </query>
+            <entity file="work/doc.zip" binary="true"/>
+        </http>
+    </target>
+
+    <macrodef name="load-schema">
+        <!-- Load all schema files in 'schema.fileset' into database 'db.name'.
+             Database exists in folder 'db.dir'. -->
+        <attribute name="db.dir"/>
+        <attribute name="db.name"/>
+        <attribute name="schema.fileset"/>
+        <sequential>
+            <for param="df.file">
+                <fileset refid="@{schema.fileset}"/>
+                <sequential>
+                    <local name="parent.dir"/>
+                    <local name="parent.dir.name"/>
+                    <local name="df.file.name"/>
+                    <dirname property="parent.dir" file="@{df.file}"/>
+                    <basename property="df.file.name" file="@{df.file}"/>
+                    <basename property="parent.dir.name" file="${parent.dir}"/>
+                    <!-- Remove area definitions from the schema files -->
+                    <copy todir="work/schema/${parent.dir.name}" overwrite="true">
+                         <fileset dir="${parent.dir}">
+                             <include name="${df.file.name}"/>
+                         </fileset>
+                        <filterchain>
+                            <linecontainsregexp negate="true">
+                                <regexp pattern="\s*[Aa][Rr][Ee][Aa]\s+&quot;\w+&quot;\s*"/>
+                            </linecontainsregexp>
+                        </filterchain>
+                    </copy>
+                    <PCTLoadSchema dlcHome="${DLC}" srcFile="work/schema/${parent.dir.name}/${df.file.name}" unfreeze="true">
+                        <PCTConnection dbName="@{db.name}" dbDir="@{db.dir}" singleUser="true"/>
+                    </PCTLoadSchema>
+                </sequential>
+            </for>
+        </sequential>
+    </macrodef>
+
+    <macrodef name="create-db-per-folder">
+        <!-- Create a new database for each leaf directory in 'db.dirset'
+             If these are unit test databases then 'db.dirset' should be 'true'
+             to exclude the unittest databases from module compile.
+             For non unit test db's the database name is name of leaf directory.
+             For unit test db's the database name is name of leaf directory suffixed with '-ut'.
+             The schema df files in each leaf directory are then loaded into the databases. -->
+        <attribute name="db.dirset"/>
+        <attribute name="is.unittest"/>
+        <sequential>
+            <for param="a.db">
+                <dirset refid="@{db.dirset}"/>
+                <sequential>
+                    <local name="folder.name"/>
+                    <local name="ut-suffix"/>
+                    <local name="schema.count"/>
+
+                    <condition property="ut-suffix" value="-ut" else="">
+                        <contains string="@{is.unittest}" substring="true"/>
+                    </condition>
+                    <basename property="folder.name" file="@{a.db}"/>
+                    <fileset id="schema.ref" dir="@{a.db}">
+                        <include name="**/*.df"/>
+                    </fileset>
+                    <resourcecount property="schema.count">
+                        <fileset refid="schema.ref"/>
+                    </resourcecount>
+                    <if>
+                        <not>
+                            <equals arg1="${schema.count}" arg2="0"/>
+                        </not>
+                        <then>
+                            <PCTCreateBase dlcHome="${DLC}" DBName="${folder.name}${ut-suffix}" DestDir="work/db"/>
+                            <!-- Write connection info.
+                                 All db connections are writtent to unittest.pf.
+                                 Only non-unit test specific connections are written to compile.pf. -->
+                            <if>
+                                <not>
+                                    <equals arg1="@{is.unittest}" arg2="true"/>
+                                </not>
+                                <then>
+                                    <echo file="work/db/compile.pf" append="true"/>
+                                    <echo file="work/db/compile.pf" append="true"
+                                        message="-db work/db/${folder.name} -ld ${module}-${folder.name} -RO"/>
+                                </then>
+                            </if>
+                            <echo file="work/db/unittest.pf" append="true"/>
+                            <echo file="work/db/unittest.pf" append="true"
+                                message="-db work/db/${folder.name}${ut-suffix} -ld ${module}-${folder.name}${ut-suffix} -1"/>
+                            <load-schema db.dir="work/db" schema.fileset="schema.ref" db.name="${folder.name}${ut-suffix}"/>
+                            
+                            <echo file="work/db/entitymapping.pf" append="true"/>
+                            <echo file="work/db/entitymapping.pf" append="true"
+                                message="-db ${basedir}/work/db/${folder.name}${ut-suffix} -ld ${module}-${folder.name}${ut-suffix} -1"/>
+                        </then>
+                        <else>
+                            <echo level="info" message="No schema files found in ${basedir}/work/db/${folder.name}. Database creation skipped"/>
+                        </else>
+                    </if>
+                </sequential>
+            </for>
+        </sequential>
+    </macrodef>
+
+
+    <macrodef name="load-dotd">
+        <!-- Load all dotd files in 'data.fileset' into database 'db.name'.
+             Database exists in folder 'db.dir'. -->
+        <attribute name="db.dir"/>
+        <attribute name="db.name"/>
+        <attribute name="data.fileset"/>
+        <attribute name="data.folder"/>
+        <sequential>
+            <for param="dotd.file">
+                <fileset refid="@{data.fileset}"/>
+                <sequential>
+                    <local name="dotd.file.name"/>
+                    <local name="database.name"/>
+                    <local name="table"/>
+                    <basename property="dotd.file.name" file="@{dotd.file}"/>
+                    <!-- Load data files -->
+                    <loadfile srcfile="@{data.folder}/${dotd.file.name}" property="table">
+                        <filterchain>
+                            <linecontains>
+                                <contains value="filename"/>
+                            </linecontains>
+                            <tokenfilter>
+                                <replacestring from="filename=" to=""/>
+                            </tokenfilter>
+                        </filterchain>
+                    </loadfile>
+                    <echo level="info" message="Load [@{data.folder}/${dotd.file.name}] table:${table} db:@{db.name}"/>
+                    <fail message="Cannot load unittest data to non existent database [work/db/@{db.name}.db]">
+                        <condition>
+                            <not>
+                                <available file="work/db/@{db.name}.db"/>
+                            </not>
+                        </condition>
+                    </fail>
+                    <PCTLoadData srcDir="unittest/progress/data/dotd/${folder.name}" dlcHome="${DLC}" errorTolerance="100">
+                        <PCTConnection dbName="@{db.name}" dbDir="@{db.dir}" singleUser="yes"/>
+                        <Table name="${table}"/>
+                    </PCTLoadData>
+                </sequential>
+            </for>
+        </sequential>
+    </macrodef>
+
+    <macrodef name="load-data-per-folder">
+        <!-- Load dotd data for each directory in 'db.dirset'
+             If these are unit test databases then 'is.unittest' should be 'true'. -->
+        <attribute name="db.dirset"/>
+        <attribute name="is.unittest"/>
+        <sequential>
+            <for param="a.db">
+                <dirset refid="@{db.dirset}"/>
+                <sequential>
+                    <local name="folder.name"/>
+                    <local name="ut-suffix"/>
+                    <condition property="ut-suffix" value="-ut" else="">
+                        <contains string="@{is.unittest}" substring="true"/>
+                    </condition>
+                    <basename property="folder.name" file="@{a.db}"/>
+                    <fileset id="data.ref" dir="@{a.db}">
+                        <include name="**/*.d"/>
+                    </fileset>
+                    <load-dotd db.dir="work/db" data.fileset="data.ref" db.name="${folder.name}${ut-suffix}" data.folder="unittest/progress/data/dotd/${folder.name}"/>
+                </sequential>
+            </for>
+        </sequential>
+    </macrodef>
+
+</project>
